@@ -12,7 +12,9 @@ regenerable. Delete it to force a fresh download (e.g. after new listings).
 
 import json
 import os
-import urllib.request
+import time
+
+import requests
 
 # Angel One's public instrument master (no login needed to download it).
 SCRIP_MASTER_URL = (
@@ -22,14 +24,28 @@ SCRIP_MASTER_URL = (
 CACHE_FILE = "instruments.json"
 
 
-def _download_master():
-    """Download the instrument master JSON and cache it to disk."""
-    print("Downloading Angel One instrument master (one-time, ~a few MB) ...")
-    with urllib.request.urlopen(SCRIP_MASTER_URL, timeout=60) as resp:
-        data = resp.read()
-    with open(CACHE_FILE, "wb") as f:
-        f.write(data)
-    return json.loads(data)
+def _download_master(retries=5):
+    """
+    Download the instrument master JSON (~35 MB) and cache it. This large file
+    sometimes drops mid-download (IncompleteRead), so we retry, and only cache
+    it after it fully downloads AND parses as valid JSON.
+    """
+    last_err = None
+    for attempt in range(1, retries + 1):
+        try:
+            print(f"Downloading Angel One instrument master (attempt {attempt}/{retries}) ...")
+            resp = requests.get(SCRIP_MASTER_URL, timeout=180)
+            resp.raise_for_status()
+            data = resp.content
+            master = json.loads(data)          # validate before trusting/caching
+            with open(CACHE_FILE, "wb") as f:
+                f.write(data)
+            return master
+        except Exception as exc:               # network drop, incomplete read, bad JSON
+            last_err = exc
+            print(f"  download failed ({exc}); retrying ...")
+            time.sleep(3 * attempt)
+    raise RuntimeError(f"Could not download instrument master after {retries} tries: {last_err}")
 
 
 def _load_master():
