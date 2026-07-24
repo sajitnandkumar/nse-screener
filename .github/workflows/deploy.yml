@@ -49,8 +49,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f nse_data.db ]; then
-            echo "No cached DB — downloading seed from the db-seed release ..."
+          if [ ! -f nse_data.db ] || [ "${{ inputs.skip_fetch }}" = "true" ]; then
+            echo "Downloading full DB from the db-seed release ..."
             gh release download db-seed --repo "${{ github.repository }}" --pattern nse_data.db --clobber || echo "no seed release found; will fetch fresh"
           fi
 
