@@ -54,22 +54,27 @@ def main():
         last_date = db.last_stored_date(symbol)
         start = datetime.strptime(last_date, "%Y-%m-%d") if last_date else START_DATE
 
-        try:
-            rows = fetch_candles(
-                smart,
-                start_date=start,
-                symbol_token=token,
-                verbose=False,
-            )
-            before = len(db.read_candles(symbol))
-            db.save_candles(symbol, rows)
-            after = len(db.read_candles(symbol))
-            added = after - before
-            print(f"[{i:>2}/{total}] {symbol:<14} +{added:<4} new  (total {after})")
-            loaded.append(symbol)
-        except Exception as exc:  # keep going even if one stock fails
-            print(f"[{i:>2}/{total}] {symbol:<14} FAILED: {exc}")
-            failed.append(symbol)
+        # Fetch with backoff: Angel throttles the historical API, so on a
+        # rate-limit error we wait and retry a couple of times before skipping.
+        ok = False
+        for attempt in range(3):
+            try:
+                rows = fetch_candles(smart, start_date=start,
+                                     symbol_token=token, verbose=False)
+                before = len(db.read_candles(symbol))
+                db.save_candles(symbol, rows)
+                after = len(db.read_candles(symbol))
+                print(f"[{i:>2}/{total}] {symbol:<14} +{after - before:<4} new  (total {after})")
+                loaded.append(symbol)
+                ok = True
+                break
+            except Exception as exc:
+                if "rate" in str(exc).lower() and attempt < 2:
+                    time.sleep(15 * (attempt + 1))   # back off, then retry
+                    continue
+                print(f"[{i:>2}/{total}] {symbol:<14} FAILED: {exc}")
+                failed.append(symbol)
+                break
 
         time.sleep(SLEEP_BETWEEN_STOCKS)
 
