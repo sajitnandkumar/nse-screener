@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSE S/R Screener</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app">
+    <div id="topbar">
+      <span class="title">NSE&nbsp;·&nbsp;S/R Screener</span>
+      <div class="tf-toggle" id="tf-toggle">
+        <button data-tf="1d" class="active">1D</button>
+        <button data-tf="1w">1W</button>
+        <button data-tf="1m">1M</button>
+      </div>
+      <span class="spacer"></span>
+      <span class="count" id="count"></span>
+    </div>
+
+    <div id="main">
+      <div id="left">
+        <div id="list-scroll">
+          <table class="list">
+            <thead>
+              <tr>
+                <th class="l">Symbol</th>
+                <th class="l">Setup</th>
+                <th class="l">Line</th>
+                <th>Touch</th>
+                <th>Conf</th>
+                <th>&Delta;ATR</th>
+                <th>TF</th>
+              </tr>
+            </thead>
+            <tbody id="list-body"></tbody>
+          </table>
+          <div class="empty" id="list-empty" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="right">
+        <div id="chart-header">
+          <span class="h-meta" id="chart-header-text">Select a stock from the list.</span>
+        </div>
+        <div id="chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

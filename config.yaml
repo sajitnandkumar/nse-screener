@@ -1,0 +1,39 @@
+# Screener tuning — all thresholds live here. Tune, then re-render the contact
+# sheet. Distances are in ATR (volatility-normalised) so they mean the same
+# thing across stocks. Everything is measured on CLOSING prices.
+
+timeframes:
+  1d: {pivot_window: 10, min_span_bars: 120}   # >= ~6 months of history
+  1w: {pivot_window: 6,  min_span_bars: 50}    # >= ~1 year
+  1m: {pivot_window: 3,  min_span_bars: 18}    # >= ~1.5 years
+
+# tolerances (in ATR units)
+touch_tol_atr: 0.6        # a close within this many ATR of the line = a touch
+buffer_atr: 0.5           # a close beyond the line by more than this = a violation
+proximity_tol_atr: 0.5    # ONLY flag a setup if price is within this many ATR of the line now
+on_line_atr: 0.25         # within this many ATR of the line = "on the line" -> Reversal
+                          # (a hair past the line is a test, not a decisive break)
+
+# cleanliness filters — a line failing ANY of these is rejected entirely
+min_touches: 3            # need at least this many close-touches (anchors count)
+max_fit_atr: 0.18         # avg touch distance to the line, in ATR (LOWER = cleaner)
+max_violations: 2         # wrong-side closes allowed before the line is rejected
+max_wrongside_atr: 1.5    # reject if price EVER closes this many ATR past the line
+                          # on the wrong side (kills broken lines; trend-safe:
+                          # price far ABOVE a support is fine, not penalised)
+max_fit_atr_horizontal: 0.08  # horizontals must hug tighter than trendlines to count
+
+# horizontal vs trendline: if the line moves less than this many ATR over its
+# whole span, call it "horizontal"; otherwise "trendline".
+horizontal_total_atr: 1.5
+
+# Confidence score (0-100). Rewards how EXACTLY the closes sit on the line
+# (tightness) first, and how MANY times it was touched second. Ranked descending.
+confidence:
+  fit_ref_atr: 0.18       # tightness reference: fit_atr >= this scores 0 tightness,
+                          #                      fit_atr = 0 scores full tightness
+  target_touches: 5       # this many touches (or more) = full count credit
+  weight_tight: 0.7       # tightness's share of the score (count gets 1 - this)
+min_confidence: 40        # drop any setup below this confidence %
+
+top_n: 20                 # how many setups to show on the contact sheet

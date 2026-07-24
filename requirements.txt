@@ -1,0 +1,11 @@
+smartapi-python   # Angel One's official SDK — handles login + data requests
+pyotp             # generates the 6-digit 2FA code from your TOTP secret
+python-dotenv     # loads your secrets from the .env file
+tabulate          # prints the data as a clean, aligned table
+logzero           # required by smartapi-python but not auto-installed
+websocket-client  # required by smartapi-python but not auto-installed
+numpy             # trendline fitting (trendlines.py)
+pyyaml            # reads config.yaml (settings.py)
+fastapi           # local live server (optional for the static deploy)
+uvicorn           # runs the FastAPI app locally
+matplotlib        # only for the local contact_sheet.py (not needed to deploy)

@@ -1,0 +1,24 @@
+# Secrets — never commit these
+.env
+
+# Local database (regenerable from the API)
+*.db
+
+# Cached instrument master (large, regenerable download)
+instruments.json
+
+# Cached screen results (regenerable via bulk_load / build_cache)
+screen_cache.json
+
+# Generated static site (rebuilt by build_site.py / the Action)
+site/
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# OS / editor / logs
+.DS_Store
+.claude/
+logs/
