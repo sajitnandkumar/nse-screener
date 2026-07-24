@@ -5,7 +5,12 @@ name: Build & deploy screener
 on:
   schedule:
     - cron: "0 13 * * 1-5"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      skip_fetch:
+        description: "Skip the Angel One fetch and just build from the existing/seeded DB"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -56,7 +61,12 @@ jobs:
           ANGEL_MPIN: ${{ secrets.ANGEL_MPIN }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
         run: |
-          python bulk_load.py || echo "bulk_load had errors; building site from existing data"
+          if [ "${{ inputs.skip_fetch }}" = "true" ]; then
+            echo "skip_fetch=true — building from existing/seeded DB without fetching."
+            python -c "import screener; print('cached setups:', screener.build_cache())"
+          else
+            python bulk_load.py || echo "bulk_load had errors; building site from existing data"
+          fi
           python build_site.py
 
       - name: Upload Pages artifact
