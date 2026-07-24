@@ -48,33 +48,35 @@ def main():
 
     loaded, failed = [], []
     total = len(resolved)
+    consec_rate = 0            # consecutive rate-limit failures
+    RATE_LIMIT_ABORT = 25      # if this many in a row, the quota is spent — stop
 
     for i, (ticker, symbol, token) in enumerate(resolved, 1):
         # Incremental: only fetch days newer than what we already stored.
         last_date = db.last_stored_date(symbol)
         start = datetime.strptime(last_date, "%Y-%m-%d") if last_date else START_DATE
 
-        # Fetch with backoff: Angel throttles the historical API, so on a
-        # rate-limit error we wait and retry a couple of times before skipping.
-        ok = False
-        for attempt in range(3):
-            try:
-                rows = fetch_candles(smart, start_date=start,
-                                     symbol_token=token, verbose=False)
-                before = len(db.read_candles(symbol))
-                db.save_candles(symbol, rows)
-                after = len(db.read_candles(symbol))
-                print(f"[{i:>2}/{total}] {symbol:<14} +{after - before:<4} new  (total {after})")
-                loaded.append(symbol)
-                ok = True
-                break
-            except Exception as exc:
-                if "rate" in str(exc).lower() and attempt < 2:
-                    time.sleep(15 * (attempt + 1))   # back off, then retry
-                    continue
-                print(f"[{i:>2}/{total}] {symbol:<14} FAILED: {exc}")
-                failed.append(symbol)
-                break
+        try:
+            rows = fetch_candles(smart, start_date=start, symbol_token=token, verbose=False)
+            before = len(db.read_candles(symbol))
+            db.save_candles(symbol, rows)
+            after = len(db.read_candles(symbol))
+            print(f"[{i:>2}/{total}] {symbol:<14} +{after - before:<4} new  (total {after})")
+            loaded.append(symbol)
+            consec_rate = 0
+        except Exception as exc:
+            failed.append(symbol)
+            rate_limited = "rate" in str(exc).lower() or "access denied" in str(exc).lower()
+            print(f"[{i:>2}/{total}] {symbol:<14} {'RATE-LIMITED' if rate_limited else 'FAILED'}: {exc}")
+            if rate_limited:
+                consec_rate += 1
+                if consec_rate >= RATE_LIMIT_ABORT:
+                    print(f"\n{consec_rate} rate-limit errors in a row — Angel quota is spent. "
+                          f"Stopping fetch and building from existing data; the next daily run "
+                          f"will fill the rest.")
+                    break
+            else:
+                consec_rate = 0
 
         time.sleep(SLEEP_BETWEEN_STOCKS)
 
