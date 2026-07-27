@@ -5,9 +5,14 @@
 
 const LC = LightweightCharts;
 
-const state = { tf: "1d", key: null, chartType: "candles", cand: null, candles: null };
+const state = {
+  tf: "1d", key: null, chartType: "candles", cand: null, candles: null,
+  // Live filters (defaults per spec). dAtrMax hides setups not near their line.
+  filters: { dAtrMax: 0.5, minTouch: 6, minConf: 80, minTurnover: 5, setupType: "All" },
+  sort: { col: "confidence", dir: "desc" },   // default: CONF descending
+};
 let ALL = [];          // every setup, from data/screener.json
-let currentRows = [];  // the rows currently shown (filtered by timeframe)
+let currentRows = [];  // rows currently shown (tf + filters + sort)
 
 // Must match build_site.py's _safe(): non-alphanumeric -> "_"
 const safeName = (s) => s.replace(/[^A-Za-z0-9]/g, "_");
@@ -15,6 +20,43 @@ const fmtSigned = (n) => (n == null ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2)
 const fmtPrice = (n) => (n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const fmtVol = (n) => (n == null ? "—" : n.toFixed(1) + "×");
 const rowKey = (c) => `${c.symbol}:${c.line_type}:${c.timeframe}:${c.value_now}`;
+
+// Table columns — one source of truth for header, cells, and sorting.
+// `num` columns render right-aligned + monospace; `l` columns left-aligned.
+const COLUMNS = [
+  { key: "symbol",       label: "Symbol", align: "l", get: (c) => c.symbol.replace("-EQ", ""), sort: (c) => c.symbol, cell: "l sym" },
+  { key: "close",        label: "LTP",    num: true, get: (c) => fmtPrice(c.close),  sort: (c) => c.close ?? 0 },
+  { key: "setup",        label: "Setup",  align: "l", get: (c) => c.setup,           sort: (c) => c.setup, cell: "l setup" },
+  { key: "line_type",    label: "Line",   align: "l", get: (c) => (c.line_type === "trendline" ? "trend" : "horiz"), sort: (c) => c.line_type, cell: "l dim" },
+  { key: "touches",      label: "Touch",  num: true, get: (c) => c.touches,          sort: (c) => c.touches },
+  { key: "confidence",   label: "Conf",   num: true, get: (c) => Math.round(c.confidence) + "%", sort: (c) => c.confidence },
+  { key: "distance_atr", label: "ΔATR",   num: true, get: (c) => fmtSigned(c.distance_atr), sort: (c) => c.distance_atr ?? 0 },
+  { key: "vol_ratio",    label: "Vol×",   num: true, get: (c) => fmtVol(c.vol_ratio), sort: (c) => c.vol_ratio ?? -1,
+    cellCls: (c) => (c.vol_ratio >= 1.5 ? "price-up" : "dim") },
+];
+
+// A row passes if it clears every active filter.
+function passesFilters(c) {
+  const f = state.filters;
+  if (Math.abs(c.distance_atr ?? 0) > f.dAtrMax) return false;
+  if (c.touches < f.minTouch) return false;
+  if (c.confidence < f.minConf) return false;
+  if ((c.turnover_cr ?? 0) < f.minTurnover) return false;
+  if (f.setupType === "Breakouts")
+    return c.setup === "Resistance Breakout" || c.setup === "Support Breakdown";
+  if (f.setupType !== "All") return c.setup === f.setupType;
+  return true;
+}
+
+function sortRows(rows) {
+  const col = COLUMNS.find((x) => x.key === state.sort.col) || COLUMNS[5];
+  const mul = state.sort.dir === "asc" ? 1 : -1;
+  return rows.sort((a, b) => {
+    const va = col.sort(a), vb = col.sort(b);
+    if (typeof va === "string") return mul * va.localeCompare(vb);
+    return mul * (va - vb);
+  });
+}
 
 // ---- data load ---------------------------------------------------------
 async function loadAll() {
@@ -37,43 +79,86 @@ async function loadMeta() {
 }
 
 // ---- ranked list -------------------------------------------------------
-function loadList() {
-  currentRows = ALL.filter((c) => c.timeframe === state.tf)
-                   .sort((a, b) => b.confidence - a.confidence);
+// Column headers: click to sort (toggle asc/desc), arrow on the active column.
+function renderHead() {
+  const head = document.getElementById("list-head");
+  head.innerHTML = "";
+  const tr = document.createElement("tr");
+  COLUMNS.forEach((col) => {
+    const th = document.createElement("th");
+    if (col.align === "l") th.className = "l";
+    const active = state.sort.col === col.key;
+    const arrow = active ? (state.sort.dir === "asc" ? " ▲" : " ▼") : "";
+    th.innerHTML = col.label + `<span class="arr">${arrow}</span>`;
+    th.addEventListener("click", () => {
+      if (state.sort.col === col.key) state.sort.dir = state.sort.dir === "asc" ? "desc" : "asc";
+      else state.sort = { col: col.key, dir: col.num ? "desc" : "asc" };
+      loadList();
+    });
+    tr.appendChild(th);
+  });
+  head.appendChild(tr);
+}
 
+function loadList() {
+  const base = ALL.filter((c) => c.timeframe === state.tf);
+  currentRows = sortRows(base.filter(passesFilters));
+
+  renderHead();
   const body = document.getElementById("list-body");
   const empty = document.getElementById("list-empty");
-  document.getElementById("count").textContent = `${currentRows.length} setups`;
+  document.getElementById("shown-count").textContent = `${currentRows.length} of ${base.length} shown`;
+  document.getElementById("count").textContent = "";
   body.innerHTML = "";
 
   if (!currentRows.length) {
     empty.style.display = "flex";
-    empty.textContent = "No clean setups on this timeframe.";
+    empty.textContent = base.length ? "No setups match the filters — loosen them." : "No setups on this timeframe.";
     return;
   }
   empty.style.display = "none";
 
-  currentRows.forEach((c, i) => {
+  currentRows.forEach((c) => {
     const key = rowKey(c);
     const tr = document.createElement("tr");
     tr.dataset.key = key;
     if (key === state.key) tr.classList.add("selected");
-    tr.innerHTML = `
-      <td class="l sym">${c.symbol.replace("-EQ", "")}</td>
-      <td>${fmtPrice(c.close)}</td>
-      <td class="l setup">${c.setup}</td>
-      <td class="l dim">${c.line_type === "trendline" ? "trend" : "horiz"}</td>
-      <td>${c.touches}</td>
-      <td>${Math.round(c.confidence)}%</td>
-      <td>${fmtSigned(c.distance_atr)}</td>
-      <td class="${c.vol_ratio >= 1.5 ? "price-up" : "dim"}">${fmtVol(c.vol_ratio)}</td>`;
+    tr.innerHTML = COLUMNS.map((col) => {
+      const cls = [col.cell || "", col.cellCls ? col.cellCls(c) : ""].join(" ").trim();
+      return `<td${cls ? ` class="${cls}"` : ""}>${col.get(c)}</td>`;
+    }).join("");
     tr.addEventListener("click", () => selectRow(c));
     body.appendChild(tr);
   });
 
-  // Keep the selection if it still exists in this timeframe, else open the top.
+  // Keep the selection if it survived the filter, else open the top row.
   const stillHere = currentRows.find((c) => rowKey(c) === state.key);
   selectRow(stillHere || currentRows[0]);
+}
+
+// ---- filter bar --------------------------------------------------------
+function setupFilters() {
+  const bind = (id, key, parse) => {
+    const el = document.getElementById(id);
+    el.value = state.filters[key];
+    el.addEventListener("input", () => {
+      const v = parse(el.value);
+      if (!Number.isNaN(v)) { state.filters[key] = v; loadList(); }
+    });
+  };
+  bind("f-datr", "dAtrMax", parseFloat);
+  bind("f-touch", "minTouch", (v) => parseInt(v, 10));
+  bind("f-conf", "minConf", parseFloat);
+  bind("f-turn", "minTurnover", parseFloat);
+
+  document.querySelectorAll("#f-type button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.filters.setupType = btn.dataset.t;
+      document.querySelectorAll("#f-type button").forEach((b) =>
+        b.classList.toggle("active", b === btn));
+      loadList();
+    });
+  });
 }
 
 function selectRow(cand) {
@@ -246,6 +331,7 @@ window.addEventListener("DOMContentLoaded", () => {
   makeChart();
   setupToggle();
   setupChartTypeToggle();
+  setupFilters();
   const tf = new URLSearchParams(location.search).get("tf");
   if (["1d", "1w", "1m"].includes(tf)) {
     state.tf = tf;

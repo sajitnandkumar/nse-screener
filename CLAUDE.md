@@ -393,6 +393,32 @@ be runnable and reviewable before moving to the next.
       tool), app.py + fastapi/uvicorn (legacy local server, imports clean, inert for
       deploy). 16 .py files remain, all import OK; build_cache+build_site verified.
 
+- [x] Slice 23: CONF redefinition + filter bar + sorting + dedup fix (2026-07-28).
+    1. CONF is now a transparent line-QUALITY score (screener._conf_components):
+       CONF = 100*(0.35*touch + 0.35*fit + 0.15*span + 0.15*recency), each 0-1.
+       touch=min(touches,touch_cap)/touch_cap; fit=1-min(fit_atr/fit_cap,1);
+       span=min(span_DAYS/span_cap_days,1) [calendar days, NOT bars -> no tf bias,
+       monthly lines score full span]; recency=linear decay of days_since over
+       recency_window. Proximity(dist_atr) + volume DELIBERATELY EXCLUDED (own
+       columns). Config block `confidence:` (weights + touch_cap10/fit_cap0.25/
+       span_cap_days365/recency_window14). Backend min_confidence floor REMOVED
+       (UI filter handles it). candidate now carries conf_parts + span_days +
+       days_since_touch.
+    2. Filter bar (static/index.html #filter-bar + app.js setupFilters): live
+       ΔATR<=(0.5) / Touch>=(6) / Conf>=(80) / ₹cr>=(5) inputs + setup chips
+       (All/Support Reversal/Resistance Reversal/Breakouts) + "N of M shown".
+       Backend liquidity gate lowered 5cr->2cr so the turnover filter has range
+       (UI default 5cr). Defaults show 8/23/26 setups on 1d/1w/1m.
+    3. Sorting: COLUMNS-driven thead, click-to-sort asc/desc with ▲/▼ arrow,
+       default CONF desc; numeric cols right-aligned monospace (already via CSS).
+    4. Dedup bug: hull_lines.py had NO dedup (old trendlines._dedupe_clean was
+       dropped) + every hull edge is extended to now, so adjacent lower/upper-hull
+       vertices near the last bar spawned near-identical parallel lines (BLUESTONE
+       1d had 2 support edges: value 617.15/618.10, slope 4.72/4.76). Fix in
+       screener.screen_clean: collapse to ONE line per (symbol, timeframe, side) =
+       highest (confidence, touches). 771 -> 708 setups; verified 0 (sym,tf,side)
+       has >1 row. NOT yet deployed (committed; redeploy pending user OK).
+
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
   committed; .env/nse_data.db/screen_cache.json/instruments.json/site/ gitignored.

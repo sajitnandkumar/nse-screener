@@ -21,6 +21,7 @@ Four setups (side of the line + which side price is on now):
 
 import json
 import os
+from datetime import datetime
 
 from atr import atr
 from hull_lines import detect_hull_lines
@@ -101,26 +102,29 @@ def _fit_atr(ln, atrv):
     return (sum(ds) / len(ds)) / atrv if ds and atrv else 0.0
 
 
-def _confidence(touch_count, fit_atr, vol_ratio):
-    """Confidence 0-100 for ranking. Cleanliness is guaranteed by the hull, so the
-    lead signal is how MANY times the line was tested (touch_count); tightness of
-    the touches breaks ties; volume expansion nudges it when data exists."""
+def _conf_components(touches, fit_atr, span_days, days_since):
+    """CONF = a transparent line-QUALITY score (0-100): "how good and proven is this
+    line", NOT a trade prediction. Four independent, normalized (0-1) components,
+    weighted per config. Proximity (dist_atr) and volume are deliberately EXCLUDED
+    — they stay as their own columns.
+
+        touch_score   = min(touches, touch_cap) / touch_cap      (tested a lot)
+        fit_score     = 1 - min(fit_atr / fit_cap, 1)            (tighter hug)
+        span_score    = min(span_days / span_cap_days, 1)        (long-established)
+        recency_score = linear decay of days_since over recency_window (still live)
+
+    span is in CALENDAR DAYS (uniform across timeframes — a 2-year line scores the
+    same whether daily, weekly or monthly). Returns the four sub-scores + CONF."""
     c = CFG["confidence"]
-    rel = CFG.get("reliability", {})
-    tol = CFG["hull"]["touch_tol_atr"]
-    count = min(1.0, touch_count / c["target_touches"])
-    tight = max(0.0, 1.0 - fit_atr / tol) if tol else 0.0
-
-    w_vol = rel.get("weight_vol", 0.0)
-    mult = rel.get("vol_confirm_mult", 1.5)
-    if w_vol and vol_ratio is not None and mult > 1:
-        vb = max(0.0, min(1.0, (vol_ratio - 1.0) / (mult - 1.0)))
-    else:
-        vb, w_vol = 0.0, 0.0     # no volume data -> geometry keeps full weight
-
-    w_count = 0.7 * (1 - w_vol)   # touches lead
-    w_tight = 0.3 * (1 - w_vol)   # tightness tie-breaks
-    return round(100.0 * (w_count * count + w_tight * tight + w_vol * vb), 1)
+    touch = min(touches, c["touch_cap"]) / c["touch_cap"]
+    fit = 1.0 - min(fit_atr / c["fit_cap"], 1.0)
+    span = min(span_days / c["span_cap_days"], 1.0)
+    rw = c["recency_window"]
+    recency = max(0.0, 1.0 - days_since / rw) if rw else 0.0
+    conf = 100.0 * (c["weight_touch"] * touch + c["weight_fit"] * fit
+                    + c["weight_span"] * span + c["weight_recency"] * recency)
+    return {"touch": round(touch, 3), "fit": round(fit, 3), "span": round(span, 3),
+            "recency": round(recency, 3), "conf": round(conf, 1)}
 
 
 def screen_clean(symbol_to_rows):
@@ -154,18 +158,26 @@ def screen_clean(symbol_to_rows):
 
             vratio = _vol_ratio(rows, vrb, vbb)
             close = rows[-1][4]
+            last_date = datetime.strptime(rows[-1][0][:10], "%Y-%m-%d")
             for ln in lines:
                 dist_atr = ln["dist_now_atr"]
                 setup = _label_side_sign(ln["side"], dist_atr, on_line)
                 fit = _fit_atr(ln, atrv)
                 vol = round(vratio, 2) if vratio is not None else None
-                conf = _confidence(ln["touch_count"], fit, vratio)
-                if conf < CFG.get("min_confidence", 0):   # drop weak / tied rows
-                    continue
+
+                # CONF inputs: span = calendar days between first and last touch;
+                # days_since = calendar days from the last touch to the latest bar.
+                tdates = [tp["date"] for tp in ln["touch_points"]]
+                span_days = (datetime.strptime(max(tdates), "%Y-%m-%d")
+                             - datetime.strptime(min(tdates), "%Y-%m-%d")).days
+                days_since = (last_date - datetime.strptime(ln["last_touch_date"], "%Y-%m-%d")).days
+                parts = _conf_components(ln["touch_count"], fit, span_days, days_since)
+
                 out.append({
                     "symbol": symbol, "timeframe": tf,
                     "setup": setup, "role": ln["side"], "line_type": ln["line_type"],
                     "touches": ln["touch_count"], "fit_atr": round(fit, 3),
+                    "span_days": span_days, "days_since_touch": days_since,
                     "value_now": ln["value_now"], "distance_atr": dist_atr,
                     "close": round(close, 2),
                     "turnover_cr": round(turnover, 2) if turnover is not None else None,
@@ -174,7 +186,20 @@ def screen_clean(symbol_to_rows):
                     "last_idx": ln["last_idx"], "touch_points": ln["touch_points"],
                     "last_touch": ln["last_touch_date"],
                     "first_anchor": ln["first_anchor_date"],
-                    "confidence": conf, "score": conf,
+                    "conf_parts": {k: parts[k] for k in ("touch", "fit", "span", "recency")},
+                    "confidence": parts["conf"], "score": parts["conf"],
                 })
+    # DEDUP: the hull turns every edge into a candidate and extends each to now, so
+    # adjacent lower/upper-hull vertices near the current bar spawn near-identical
+    # parallel lines (e.g. BLUESTONE's two support edges). Collapse to ONE line per
+    # (symbol, timeframe, side) — the highest-confidence one (tie: more touches).
+    best = {}
+    for c in out:
+        k = (c["symbol"], c["timeframe"], c["role"])
+        cur = best.get(k)
+        if cur is None or (c["confidence"], c["touches"]) > (cur["confidence"], cur["touches"]):
+            best[k] = c
+    out = list(best.values())
+
     out.sort(key=lambda c: c["confidence"], reverse=True)
     return out

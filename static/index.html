@@ -22,20 +22,23 @@
 
     <div id="main">
       <div id="left">
+        <div id="filter-bar">
+          <label>&Delta;ATR &le;<input type="number" id="f-datr" step="0.1" min="0"></label>
+          <label>Touch &ge;<input type="number" id="f-touch" step="1" min="1"></label>
+          <label>Conf &ge;<input type="number" id="f-conf" step="1" min="0" max="100"></label>
+          <label>&#8377;cr &ge;<input type="number" id="f-turn" step="1" min="0"></label>
+          <div class="chips" id="f-type">
+            <button data-t="All" class="active">All</button>
+            <button data-t="Support Reversal">Support&nbsp;Rev</button>
+            <button data-t="Resistance Reversal">Resistance&nbsp;Rev</button>
+            <button data-t="Breakouts">Breakouts</button>
+          </div>
+          <span class="spacer"></span>
+          <span class="shown" id="shown-count"></span>
+        </div>
         <div id="list-scroll">
           <table class="list">
-            <thead>
-              <tr>
-                <th class="l">Symbol</th>
-                <th>LTP</th>
-                <th class="l">Setup</th>
-                <th class="l">Line</th>
-                <th>Touch</th>
-                <th>Conf</th>
-                <th>&Delta;ATR</th>
-                <th>Vol&times;</th>
-              </tr>
-            </thead>
+            <thead id="list-head"></thead>
             <tbody id="list-body"></tbody>
           </table>
           <div class="empty" id="list-empty" style="display:none"></div>

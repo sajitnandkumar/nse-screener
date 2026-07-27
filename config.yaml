@@ -24,25 +24,33 @@ hull:
 # line" -> labelled a Reversal (a hair past is a test, not a decisive break).
 on_line_atr: 0.25
 
-# Confidence (0-100), used to RANK the lines. Cleanliness is guaranteed by the
-# hull, so confidence is LED by how many times the line was tested (touch_count),
-# with touch-tightness (vs hull.touch_tol_atr) as a tie-break and volume as a nudge.
+# CONF (0-100): a transparent line-QUALITY score — "how good and proven is this
+# line", NOT a trade prediction. Four independent 0-1 components, weighted.
+# Proximity (dist_atr) and volume are deliberately EXCLUDED (own columns).
+#   CONF = 100 * (w_touch*touch + w_fit*fit + w_span*span + w_recency*recency)
 confidence:
-  target_touches: 10        # this many touches (or more) = full count credit;
-                            # higher = ranking spreads further across strong lines
-min_confidence: 50          # drop any setup below this confidence %
+  weight_touch: 0.35
+  weight_fit: 0.35
+  weight_span: 0.15
+  weight_recency: 0.15
+  touch_cap: 10       # touches at/above this = full touch_score
+  fit_cap: 0.25       # avg touch dist (ATR) at/above this = 0 fit_score (= hull.touch_tol_atr)
+  span_cap_days: 365  # touch-span in CALENDAR DAYS at/above this = full span_score
+                      # (uniform across timeframes — no 1D/1W/1M bias)
+  recency_window: 14  # days over which recency_score decays 1 -> 0
 
 # Tradeability layer on top of the clean geometry (screener.py).
 reliability:
   # LIQUIDITY GATE (biggest reliability lever). Average daily traded VALUE
   # (close x volume) over the last turnover_lookback DAILY bars must clear the
   # floor. Value, not share-count, so it's fair across a cheap and a costly stock.
-  min_turnover_cr: 5.0      # rupees crore/day; 0 disables the gate
+  min_turnover_cr: 2.0      # rupees crore/day backend gate; 0 disables. The UI
+                            # turnover filter defaults higher (5cr) but can dial
+                            # down to this floor to reveal smaller names.
   turnover_lookback: 20
 
-  # VOLUME context + confidence nudge. Recent = MAX volume over the last few bars
+  # VOLUME context column (Vol x). Recent = MAX volume over the last few bars
   # (robust to a partial current weekly/monthly bar) / the trailing average.
-  vol_confirm_mult: 1.5     # ratio counted as full "expansion" credit
+  # NOT part of CONF — shown as its own column.
   vol_recent_bars: 3
   vol_base_bars: 20
-  weight_vol: 0.2           # volume's share of the confidence score (0 = ignore)

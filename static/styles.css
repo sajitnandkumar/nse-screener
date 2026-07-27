@@ -92,7 +92,30 @@ html, body {
   min-height: 0;
   border-right: 1px solid var(--border);
 }
-#list-scroll { overflow-y: auto; min-height: 0; }
+#list-scroll { overflow-y: auto; min-height: 0; flex: 1; }
+
+/* ---- Filter bar ---- */
+#filter-bar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 6px 10px; border-bottom: 1px solid var(--border);
+  background: var(--panel); font-family: var(--mono); font-size: 11px;
+}
+#filter-bar label { color: var(--ink-muted); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+#filter-bar input {
+  width: 44px; background: var(--bg); color: var(--ink);
+  border: 1px solid var(--border); font-family: var(--mono); font-size: 11px;
+  padding: 2px 4px; text-align: right;
+}
+#filter-bar .spacer { flex: 1; }
+#filter-bar .shown { color: var(--ink-dim); white-space: nowrap; }
+#filter-bar .chips { display: flex; border: 1px solid var(--border); }
+#filter-bar .chips button {
+  font-family: var(--mono); font-size: 11px; padding: 2px 8px; background: transparent;
+  color: var(--ink-muted); border: none; border-right: 1px solid var(--border); cursor: pointer;
+}
+#filter-bar .chips button:last-child { border-right: none; }
+#filter-bar .chips button:hover { color: var(--ink); }
+#filter-bar .chips button.active { background: var(--row-sel); color: var(--ink); }
 
 /* ---- Ranked list table ---- */
 table.list {
@@ -114,6 +137,9 @@ table.list th {
   border-bottom: 1px solid var(--border);
 }
 table.list th.l, table.list td.l { text-align: left; }
+table.list th { cursor: pointer; user-select: none; white-space: nowrap; }
+table.list th:hover { color: var(--ink-muted); }
+table.list th .arr { color: var(--ink); }
 table.list td {
   text-align: right;
   padding: 6px 10px;
