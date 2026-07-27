@@ -5,13 +5,15 @@
 
 const LC = LightweightCharts;
 
-const state = { tf: "1d", key: null };
+const state = { tf: "1d", key: null, chartType: "candles", cand: null, candles: null };
 let ALL = [];          // every setup, from data/screener.json
 let currentRows = [];  // the rows currently shown (filtered by timeframe)
 
 // Must match build_site.py's _safe(): non-alphanumeric -> "_"
 const safeName = (s) => s.replace(/[^A-Za-z0-9]/g, "_");
 const fmtSigned = (n) => (n == null ? "—" : (n >= 0 ? "+" : "") + n.toFixed(2));
+const fmtPrice = (n) => (n == null ? "—" : n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+const fmtVol = (n) => (n == null ? "—" : n.toFixed(1) + "×");
 const rowKey = (c) => `${c.symbol}:${c.line_type}:${c.timeframe}:${c.value_now}`;
 
 // ---- data load ---------------------------------------------------------
@@ -19,6 +21,19 @@ async function loadAll() {
   const res = await fetch("data/screener.json");
   ALL = await res.json();
   loadList();
+}
+
+// "Last generated" stamp (written by build_site.py into data/meta.json).
+async function loadMeta() {
+  try {
+    const res = await fetch("data/meta.json");
+    if (!res.ok) return;
+    const m = await res.json();
+    const bits = [];
+    if (m.data_through) bits.push(`data through ${m.data_through}`);
+    if (m.generated_at) bits.push(`built ${m.generated_at}`);
+    document.getElementById("generated").textContent = bits.join("  ·  ");
+  } catch (e) { /* older builds may not have meta.json */ }
 }
 
 // ---- ranked list -------------------------------------------------------
@@ -45,12 +60,13 @@ function loadList() {
     if (key === state.key) tr.classList.add("selected");
     tr.innerHTML = `
       <td class="l sym">${c.symbol.replace("-EQ", "")}</td>
+      <td>${fmtPrice(c.close)}</td>
       <td class="l setup">${c.setup}</td>
       <td class="l dim">${c.line_type === "trendline" ? "trend" : "horiz"}</td>
       <td>${c.touches}</td>
       <td>${Math.round(c.confidence)}%</td>
       <td>${fmtSigned(c.distance_atr)}</td>
-      <td class="dim">${c.timeframe}</td>`;
+      <td class="${c.vol_ratio >= 1.5 ? "price-up" : "dim"}">${fmtVol(c.vol_ratio)}</td>`;
     tr.addEventListener("click", () => selectRow(c));
     body.appendChild(tr);
   });
@@ -70,7 +86,7 @@ function selectRow(cand) {
 
 // ---- chart -------------------------------------------------------------
 let chart = null;
-let candleSeries = null;
+let mainSeries = null;   // candlestick OR line, depending on state.chartType
 let trendSeries = [];
 
 function makeChart() {
@@ -97,48 +113,60 @@ function sizeChart() {
   if (chart) chart.applyOptions({ width: el.clientWidth, height: el.clientHeight });
 }
 
+// Fetch a stock's candles, remember them, and draw. Called on row select.
 async function loadChart(cand) {
   const res = await fetch(`data/ohlcv/${safeName(cand.symbol)}__${cand.timeframe}.json`);
-  const candles = await res.json();
+  state.cand = cand;
+  state.candles = await res.json();
+  drawChart(true);   // new stock -> fit the view
+}
 
-  if (candleSeries) chart.removeSeries(candleSeries);
+// Draw state.candles + the setup line in the current chart type.
+// `fit` refits the time scale; on a mere type toggle we keep the zoom.
+function drawChart(fit) {
+  const cand = state.cand, candles = state.candles;
+  if (!cand || !candles) return;
+
+  if (mainSeries) chart.removeSeries(mainSeries);
   trendSeries.forEach((s) => chart.removeSeries(s));
   trendSeries = [];
 
-  candleSeries = chart.addCandlestickSeries({
-    upColor: "#2ea06a", downColor: "#e0554e",
-    wickUpColor: "#2ea06a", wickDownColor: "#e0554e",
-    borderVisible: false, priceLineVisible: false,
-  });
-  candleSeries.setData(candles);
+  if (state.chartType === "line") {
+    mainSeries = chart.addLineSeries({
+      color: "#9aa7b4", lineWidth: 2,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: true,
+    });
+    mainSeries.setData(candles.map((c) => ({ time: c.time, value: c.close })));
+  } else {
+    mainSeries = chart.addCandlestickSeries({
+      upColor: "#2ea06a", downColor: "#e0554e",
+      wickUpColor: "#2ea06a", wickDownColor: "#e0554e",
+      borderVisible: false, priceLineVisible: false,
+    });
+    mainSeries.setData(candles);
+  }
 
-  // Draw the one setup line from the candidate's geometry.
+  // Draw the one setup line from the candidate's TRUE geometry (endpoints from
+  // its slope) — for both trendlines and horizontals. Drawing a "horizontal"
+  // flat when its touches actually drift would float the markers off the line.
   const emph = "#e6edf3";
   const first = cand.first_idx, last = cand.last_idx;
   const vn = cand.value_now, slope = cand.slope;
   if (candles[first] && candles[last]) {
-    if (cand.line_type === "horizontal") {
-      candleSeries.createPriceLine({
-        price: vn, color: emph, lineWidth: 2, lineStyle: LC.LineStyle.Solid,
-        axisLabelVisible: true,
-        title: `${cand.role === "resistance" ? "R" : "S"} x${cand.touches}`,
-      });
-    } else {
-      const s = chart.addLineSeries({
-        color: emph, lineWidth: 2, lineStyle: LC.LineStyle.Solid,
-        priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-      });
-      s.setData([
-        { time: candles[first].time, value: vn + slope * (first - last) },
-        { time: candles[last].time, value: vn },
-      ]);
-      trendSeries.push(s);
-    }
+    const s = chart.addLineSeries({
+      color: emph, lineWidth: 2, lineStyle: LC.LineStyle.Solid,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
+    });
+    s.setData([
+      { time: candles[first].time, value: vn + slope * (first - last) },
+      { time: candles[last].time, value: vn },
+    ]);
+    trendSeries.push(s);
   }
 
   // Touch-point markers.
   if (cand.touch_points && cand.touch_points.length) {
-    candleSeries.setMarkers(
+    mainSeries.setMarkers(
       cand.touch_points.map((tp) => ({
         time: tp.date, position: cand.role === "resistance" ? "aboveBar" : "belowBar",
         color: "#8a95a3", shape: "circle", size: 0.6,
@@ -146,7 +174,7 @@ async function loadChart(cand) {
     );
   }
 
-  chart.timeScale().fitContent();
+  if (fit) chart.timeScale().fitContent();
   renderHeader(cand);
 }
 
@@ -163,6 +191,7 @@ function renderHeader(c) {
   const sep = `<span class="h-meta dim">·</span>`;
   el.innerHTML = `
     <span class="h-sym">${sym}</span>
+    <span class="h-meta ltp">${fmtPrice(c.close)}</span>
     <span class="h-setup">${c.setup}</span>
     ${sep}
     <span class="h-meta dim">${c.line_type}</span>
@@ -172,6 +201,10 @@ function renderHeader(c) {
     <span class="h-meta">confidence <b>${Math.round(c.confidence)}%</b></span>
     ${sep}
     <span class="h-meta">fit <b>${c.fit_atr.toFixed(3)}</b></span>
+    ${sep}
+    <span class="h-meta">vol <b>${fmtVol(c.vol_ratio)}</b></span>
+    ${sep}
+    <span class="h-meta">turnover <b>${c.turnover_cr == null ? "—" : "₹" + c.turnover_cr + "cr"}</b></span>
     ${sep}
     <span class="h-meta">${STATE_TEXT[c.setup] || ""}</span>
     ${sep}
@@ -194,10 +227,25 @@ function setupToggle() {
   });
 }
 
+// ---- chart-type toggle (Candles / Line) --------------------------------
+function setupChartTypeToggle() {
+  document.querySelectorAll("#chart-type-toggle button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (btn.dataset.ct === state.chartType) return;
+      state.chartType = btn.dataset.ct;
+      document.querySelectorAll("#chart-type-toggle button").forEach((b) =>
+        b.classList.toggle("active", b === btn)
+      );
+      drawChart(false);   // keep the current zoom when just switching type
+    });
+  });
+}
+
 // ---- boot --------------------------------------------------------------
 window.addEventListener("DOMContentLoaded", () => {
   makeChart();
   setupToggle();
+  setupChartTypeToggle();
   const tf = new URLSearchParams(location.search).get("tf");
   if (["1d", "1w", "1m"].includes(tf)) {
     state.tf = tf;
@@ -206,4 +254,5 @@ window.addEventListener("DOMContentLoaded", () => {
     );
   }
   loadAll();
+  loadMeta();
 });

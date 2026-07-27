@@ -1,27 +1,30 @@
 """
-The screening engine (close-based, cleanliness-filtered).
+The screening engine — hull-based (Slice 22 rewrite).
 
-For each symbol x timeframe it detects clean support/resistance lines
-(trendlines.detect_clean_lines, all on CLOSING prices), keeps only those price
-is currently near (ATR proximity gate), labels each by side + where price sits,
-and scores them fit-first so the tightest lines rank highest.
+Lines come from hull_lines.detect_hull_lines: lower-hull edges = support,
+upper-hull edges = resistance, on CLOSING prices. Between a line's anchors no
+close is ever on the wrong side (true by construction, not by filtering), and a
+line is kept only if tested >= min_touches and touched within recency_days.
+
+This module adds the tradeability layer on top of that clean geometry:
+  - a LIQUIDITY gate (average daily traded value) so illiquid noise is dropped,
+  - the setup LABEL (side + where price sits now),
+  - VOLUME context, and a touch-count-led CONFIDENCE used for ranking.
 
 Four setups (side of the line + which side price is on now):
   - Support Reversal    : price at / above a support line   (may bounce)
   - Support Breakdown   : price has closed below a support line
   - Resistance Reversal : price at / below a resistance line (may reject)
   - Resistance Breakout : price has closed above a resistance line
-
-"At the line" (within on_line_atr) counts as a Reversal, not a break — a hair
-past the line is a test, not a decisive break.
+"At the line" (within on_line_atr) counts as a Reversal, not a break.
 """
 
 import json
 import os
 
 from atr import atr
+from hull_lines import detect_hull_lines
 from resample import to_weekly, to_monthly
-from trendlines import detect_clean_lines
 from settings import CFG
 
 # Screening ~2000 stocks x 3 timeframes takes minutes, so we compute it once
@@ -50,11 +53,9 @@ def load_cache():
 
 
 def _label_side_sign(role, signed_dist, on_line=0.0):
-    """
-    Label from (line side) + (sign of signed_dist), in ATR. Positive = price
-    above the line. Within `on_line` ATR of the line -> treated as a Reversal
-    (price is sitting on the line, not decisively past it).
-    """
+    """Label from (line side) + (sign of signed_dist), in ATR. Positive = price
+    above the line. Within `on_line` ATR of the line -> a Reversal (sitting on the
+    line, not decisively past it)."""
     if abs(signed_dist) <= on_line:
         return "Support Reversal" if role == "support" else "Resistance Reversal"
     above = signed_dist >= 0
@@ -63,60 +64,116 @@ def _label_side_sign(role, signed_dist, on_line=0.0):
     return "Resistance Breakout" if above else "Resistance Reversal"
 
 
-def _confidence(ln):
-    """
-    Confidence score 0-100: how EXACTLY the closes sit on the line (tightness)
-    plus how MANY times it was touched. Tightness dominates, so lines whose
-    touches sit right on the line rank highest; loosely-touched lines (like
-    EIDPARRY, fit 0.17) score low.
-    """
+def _turnover_cr(daily, lookback):
+    """Average daily traded value (close x volume), in rupees crore, over the last
+    `lookback` daily bars. None if there's no usable volume. Liquidity is a stock
+    property, so it's measured on DAILY data regardless of the timeframe."""
+    if not daily:
+        return None
+    tail = daily[-lookback:]
+    vals = [r[4] * r[5] for r in tail if r[4] and r[5]]
+    if not vals:
+        return None
+    return (sum(vals) / len(vals)) / 1e7    # 1 crore = 1e7
+
+
+def _vol_ratio(rows, recent_bars, base_bars):
+    """Recent volume expansion: MAX volume over the last `recent_bars` bars over the
+    mean of the `base_bars` before them (MAX is robust to a partial current bar).
+    None if there aren't enough bars."""
+    if len(rows) < recent_bars + 5:
+        return None
+    recent = max((r[5] or 0) for r in rows[-recent_bars:])
+    base_slice = rows[-(recent_bars + base_bars):-recent_bars]
+    base_vols = [r[5] for r in base_slice if r[5]]
+    if not base_vols:
+        return None
+    base = sum(base_vols) / len(base_vols)
+    return recent / base if base > 0 else None
+
+
+def _fit_atr(ln, atrv):
+    """Average distance of the line's touches to the line, in ATR. Small by
+    construction (touches are within touch_tol); used only as a ranking tie-break
+    so lines whose closes sit exactly on the line edge out looser ones."""
+    s, vn, last = ln["slope"], ln["value_now"], ln["last_idx"]
+    ds = [abs(tp["price"] - (vn + s * (tp["idx"] - last))) for tp in ln["touch_points"]]
+    return (sum(ds) / len(ds)) / atrv if ds and atrv else 0.0
+
+
+def _confidence(touch_count, fit_atr, vol_ratio):
+    """Confidence 0-100 for ranking. Cleanliness is guaranteed by the hull, so the
+    lead signal is how MANY times the line was tested (touch_count); tightness of
+    the touches breaks ties; volume expansion nudges it when data exists."""
     c = CFG["confidence"]
-    tightness = max(0.0, 1.0 - ln["fit_atr"] / c["fit_ref_atr"])   # 1.0 = exact
-    count = min(1.0, ln["touches"] / c["target_touches"])
-    wt = c["weight_tight"]
-    return round(100.0 * (wt * tightness + (1 - wt) * count), 1)
+    rel = CFG.get("reliability", {})
+    tol = CFG["hull"]["touch_tol_atr"]
+    count = min(1.0, touch_count / c["target_touches"])
+    tight = max(0.0, 1.0 - fit_atr / tol) if tol else 0.0
+
+    w_vol = rel.get("weight_vol", 0.0)
+    mult = rel.get("vol_confirm_mult", 1.5)
+    if w_vol and vol_ratio is not None and mult > 1:
+        vb = max(0.0, min(1.0, (vol_ratio - 1.0) / (mult - 1.0)))
+    else:
+        vb, w_vol = 0.0, 0.0     # no volume data -> geometry keeps full weight
+
+    w_count = 0.7 * (1 - w_vol)   # touches lead
+    w_tight = 0.3 * (1 - w_vol)   # tightness tie-breaks
+    return round(100.0 * (w_count * count + w_tight * tight + w_vol * vb), 1)
 
 
 def screen_clean(symbol_to_rows):
-    """
-    Returns ONLY setups where a clean line exists AND price is within
-    proximity_tol_atr of it now, ranked best-first. Most stocks produce nothing.
-    Each result carries the geometry needed to draw it.
-    """
+    """Detect hull lines for every symbol x timeframe, keep the liquid ones, label
+    each, and rank by confidence (touch-count led). Each result carries the geometry
+    the frontend needs to draw it."""
     tfs = [("1d", None), ("1w", to_weekly), ("1m", to_monthly)]
-    prox = CFG["proximity_tol_atr"]
     on_line = CFG.get("on_line_atr", 0.0)
-    out = []
+    atr_win = CFG["hull"].get("atr_window", 14)
 
+    rel = CFG.get("reliability", {})
+    min_turnover = rel.get("min_turnover_cr", 0.0)
+    turnover_lb = rel.get("turnover_lookback", 20)
+    vrb, vbb = rel.get("vol_recent_bars", 3), rel.get("vol_base_bars", 20)
+
+    out = []
     for symbol, daily in symbol_to_rows.items():
+        # LIQUIDITY GATE — a stock property, applied once for all timeframes.
+        turnover = _turnover_cr(daily, turnover_lb)
+        if min_turnover and (turnover is None or turnover < min_turnover):
+            continue
+
         for tf, resample in tfs:
             rows = resample(daily) if resample else daily
-            atrv = atr(rows)
+            atrv = atr(rows, atr_win)
             if not atrv:
                 continue
-            p = CFG["timeframes"][tf]
-            lines = detect_clean_lines(rows, atrv, p["pivot_window"], p["min_span_bars"])
+            lines = detect_hull_lines(rows, tf)
             if not lines:
                 continue
 
+            vratio = _vol_ratio(rows, vrb, vbb)
             close = rows[-1][4]
             for ln in lines:
-                dist_atr = (close - ln["value_now"]) / atrv
-                if abs(dist_atr) > prox:          # proximity GATE (not a label)
+                dist_atr = ln["dist_now_atr"]
+                setup = _label_side_sign(ln["side"], dist_atr, on_line)
+                fit = _fit_atr(ln, atrv)
+                vol = round(vratio, 2) if vratio is not None else None
+                conf = _confidence(ln["touch_count"], fit, vratio)
+                if conf < CFG.get("min_confidence", 0):   # drop weak / tied rows
                     continue
-                conf = _confidence(ln)
-                if conf < CFG["min_confidence"]:  # only confident setups
-                    continue
-                setup = _label_side_sign(ln["role"], dist_atr, on_line)
                 out.append({
                     "symbol": symbol, "timeframe": tf,
-                    "setup": setup, "role": ln["role"], "line_type": ln["line_type"],
-                    "touches": ln["touches"], "fit_atr": ln["fit_atr"],
-                    "violations": ln["violations"], "span": ln["span"],
-                    "value_now": ln["value_now"], "distance_atr": round(dist_atr, 2),
-                    "slope": ln["slope"], "first_idx": ln["first_idx"],
+                    "setup": setup, "role": ln["side"], "line_type": ln["line_type"],
+                    "touches": ln["touch_count"], "fit_atr": round(fit, 3),
+                    "value_now": ln["value_now"], "distance_atr": dist_atr,
+                    "close": round(close, 2),
+                    "turnover_cr": round(turnover, 2) if turnover is not None else None,
+                    "vol_ratio": vol,
+                    "slope": ln["slope"], "first_idx": ln["first_anchor_idx"],
                     "last_idx": ln["last_idx"], "touch_points": ln["touch_points"],
-                    "last_touch": ln["last_touch"],
+                    "last_touch": ln["last_touch_date"],
+                    "first_anchor": ln["first_anchor_date"],
                     "confidence": conf, "score": conf,
                 })
     out.sort(key=lambda c: c["confidence"], reverse=True)

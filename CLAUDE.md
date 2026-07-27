@@ -223,10 +223,207 @@ be runnable and reviewable before moving to the next.
       * Verified locally: build_site -> 1113 setups / 919 candle files / 35MB;
         static site renders (top 1M = ELDEHSG 98% conf). DB=236MB/2061 symbols
         (too big to commit -> Actions cache; first run full fetch ~45-90min).
-      AWAITING: user creates PUBLIC GitHub repo, commits code+EQUITY_L.csv+vendor
-      (NOT .env/db/site — gitignored), adds ANGEL_* repo Secrets, sets Pages source
-      = GitHub Actions, runs the workflow. Optional: seed first run via a Release
-      asset to skip the long first fetch.
+      DONE & DEPLOYED (2026-07-24). LIVE: https://sajitnandkumar.github.io/nse-screener/
+      Repo: github.com/sajitnandkumar/nse-screener (PUBLIC). 1113 setups live.
+
+- [x] Slice 17: UX + reliability upgrade (2026-07-27).
+    (1) Chart Candles/Line toggle (in chart header; keeps zoom on toggle — only a
+        new stock selection refits). app.js: mainSeries built per state.chartType;
+        loadChart() fetches+stores, drawChart(fit) renders.
+    (2) LTP (last close) shown in the list + chart header. screener emits `close`.
+        Dropped the redundant list TF column (list is already filtered to the tf).
+    (3) Reliability filters in a `reliability:` block in config.yaml, applied in
+        screener.screen_clean (gates) + _confidence (booster):
+        - LIQUIDITY GATE (per stock, on daily data): avg ~20d traded value
+          (close x volume) >= min_turnover_cr (₹5cr). Biggest noise-remover.
+          _turnover_cr(); emitted as `turnover_cr`.
+        - VOLUME CONFIRMATION: breakout/breakdown REQUIRE recent volume expansion
+          (vol_ratio >= vol_confirm_mult=1.5); reversals get a confidence booster
+          only. vol_ratio = MAX vol over last vol_recent_bars / mean of prior
+          vol_base_bars (MAX is robust to a partial current weekly/monthly bar).
+          _vol_ratio(); emitted as `vol_ratio`; shown as `Vol×` column (green ≥1.5).
+        - RECENCY: skip lines whose last touch is stale per tf (max_stale_bars).
+          bars_since = last_idx - max(touch idx); emitted as `bars_since_touch`.
+        - DISPERSION: touch span (max-min touch idx) >= min_touch_span_frac(0.5) x
+          min_span_bars — touches must spread across time, not cluster.
+        Confidence formula now: 100*(w_tight*tightness + w_count*count + w_vol*vol_boost)
+        where w_vol=weight_vol(0.2) reserved from geometry ONLY when vol data exists
+        (missing volume -> geometry keeps full weight, no penalty).
+        NOTE: after this, screener.json rows carry close/turnover_cr/vol_ratio/
+        bars_since_touch — must rebuild cache + site (skip_fetch=true) to populate.
+
+- [x] Slice 18: "Purist" tightness + two S/R bug fixes (2026-07-27).
+    TIGHTNESS (config.yaml): touch_tol_atr 0.6->0.3, max_fit_atr 0.18->0.06,
+      max_fit_atr_horizontal 0.08->0.03, confidence.fit_ref_atr 0.18->0.06,
+      weight_tight 0.7->0.8. Only near-exact lines survive (avg deviation ~0.02
+      ATR). Side effect: most survivors have exactly 3 touches (near-zero
+      deviation + many touches is rare). Sweep showed near-exact line COUNT peaks
+      around tol0.4/fit0.10 then plateaus — tightening past that mainly trims count.
+    BUG 1 (drawing): a shallow-sloped line tagged "horizontal" (total move just
+      under horizontal_total_atr) was drawn FLAT at value_now via createPriceLine,
+      so its earlier touches floated above the flat line. FIX: app.js drawChart now
+      draws EVERY line (horiz + trend) through its true geometry (LineSeries
+      endpoints from slope), lastValueVisible for the axis tag. Markers now land on
+      the line. (DHANBANK 1d: touches 36.42->35.88->34.42, drawn flat at 34.24.)
+    BUG 2 (logic): cleanliness was only checked from the FIRST TOUCH forward, so a
+      horizontal level price traded far past BEFORE the touch window still passed
+      (DHANBANK "resistance" 34.24 had closes to 45.77 / 47 days >5% above it in
+      2020-2024; FORCEMOT "support" had price 31.9 ATR below it). FIX:
+      trendlines._fit_clean computes hist_wrongside_atr = worst wrong-side close vs
+      the flat level (value_now) over the FULL history; detect_clean_lines rejects
+      HORIZONTALS whose hist_wrongside_atr > max_hist_wrongside_atr_horizontal
+      (1.5, new config knob). Horizontals only — a trendline legitimately exists
+      only over its span, and back-projecting its slope across all history is
+      meaningless (that naive test falsely flagged 59; horizontal-only flagged 14
+      -> removed 10 real false levels). Result: 138 -> 128 setups, trendlines
+      untouched, DHANBANK/FORCEMOT/GMRP&UI/BIOCON false horizontals gone.
+
+- [x] Slice 19: CONTAINMENT filter — "price must HUG the line" (2026-07-27).
+      User flagged INDIAGLYCO 1w (conf 94%, fit 0.003): touches were pristine but
+      3 clustered in 2021-22 + 1 in 2026 across a 4-year void, and price dipped
+      5.7 ATR BELOW the resistance in between — a slope through empty space, not a
+      respected boundary. Root cause: fit_atr only measures TOUCH distance; nothing
+      measured how far the REST of price strayed. Investigated max-gap-between-
+      touches (rejected — ~1.0 for 126/128, structural: lines are old-cluster + 1
+      recent touch). Right lever = far-side excursion: for each line, the deepest
+      close on the OPEN side (below a resistance / above a support) over its span.
+      trendlines._fit_clean computes max_farside_atr; detect_clean_lines rejects any
+      line (horiz + trend) with max_farside_atr > CFG max_farside_atr (new knob=4.0).
+      screener emits max_farside_atr. Result 128 -> 21 (all survivors <=3.99 ATR
+      far-side); INDIAGLYCO/BALKRISIND(24.5)/SHAKTIPUMP(23.1)/DBCORP(15.9) all gone.
+      Confidence ceiling fell 94%->74% — CORRECT: the 90%+ lines scored high on
+      touch-tightness but were exactly the wild lines. All survivors 1w/1m (daily
+      has more bars, more chance to stray). Tune: max_farside_atr 4->5 ~31 setups,
+      ->3 ~12. This SUPERSEDES EIDPARRY-style "big rally off rising support" — user
+      now wants price coiled tight around the line, not trending far away from it.
+
+- [x] Slice 20: "No wrong-side crossing between touches" + per-tf containment
+      (2026-07-27). User flagged JAMNAAUTO 1w (avg-dist 0.9 = hugs line, normal
+      slope — clean by every metric) with the real rule: "between two touches on
+      the support line, the price crossed BELOW the line." I.e. a valid line must
+      be RESPECTED between its touches (support never closes below, resistance
+      never above). Also "1D has 0 setups": the old single max_farside_atr=4 cap
+      was span-dependent — daily lines span 120+ bars so stray further in ATR than
+      ~18-bar monthly lines, so a global cap deletes ALL daily. Fixes:
+      * VIOLATIONS now counted strictly BETWEEN first & last TOUCH (was first-touch
+        -> now), so the post-last-touch current region is judged by the LABEL
+        (reversal vs break), not rejected. max_violations 2->0, buffer_atr 0.5->0.25
+        (a "decisive break"; buffer 0 is too strict — closes wiggle a hair off).
+        trendlines._fit_clean: lt=touch_idx.max(); violations/wrongside over
+        [first,lt]; far-side over [first,now].
+      * CONTAINMENT (max_farside_atr) is now PER-TIMEFRAME {1d:8,1w:5,1m:4} and the
+        gate moved from detect_clean_lines to screener.screen_clean (which knows
+        tf). detect_clean_lines no longer gates far-side.
+      Result: 21 -> 24 setups, 1d=11/1w=8/1m=5 (all tabs populated), JAMNAAUTO +
+      INDIAGLYCO both gone, verified 0 wrong-side crossings among all survivors.
+      Tune: max_violations (0=strict), buffer_atr, per-tf max_farside_atr.
+
+- [x] Slice 21: Reversal must hold the line AFTER the last touch too (2026-07-27).
+      User flagged ELGIEQUIP + INDUSINDBK 1d Resistance Reversals: price crossed
+      ABOVE the line after the last touch (26 and 5 bars) then came back, so
+      "holding below resistance" was false. Rule: for a REVERSAL, price must stay
+      on the correct side from the last touch to NOW, not just between touches.
+      screener._respects_after_touch(rows, ln, atrv, buffer_atr): from last-touch
+      idx to end, reject if any close is > buffer_atr on the wrong side (support
+      closed below / resistance above). Applied only to Resistance/Support Reversal
+      (breakouts/breakdowns are EXEMPT — crossing the line IS their setup). Result:
+      24 -> 10 setups (1d=2/1w=4/1m=4); ELGIEQUIP/INDUSINDBK gone; verified all 5
+      reversal survivors hold their side post-touch. List is now very exclusive
+      (10 of ~2000) — quality over quantity, matches the user's stated bar.
+
+- [x] Slice 22: TRENDLINE DETECTOR REWRITTEN on an exact convex-hull definition
+      (2026-07-28). Discarded the fit-and-filter approach. Three rules: (1) lines
+      anchored on CLOSES; (2) between a line's two anchors NO close is on the wrong
+      side; (3) most recent touch within recency_days (10 calendar). Rule 1+2 ARE
+      the convex hull: LOWER-hull edges = support (nothing closes below between
+      anchors, by construction), UPPER-hull edges = resistance. No regression, no
+      violation-filtering — exactness is structural.
+      * `hull_lines.py` NEW: Andrew's monotone chain on (bar_index, close), on a
+        trailing per-tf WINDOW (hull.lookback {1d:750,1w:null,1m:null}) so recent
+        structure isn't hidden beneath older global extremes. Each edge -> extend to
+        now, count touches within touch_tol_atr(0.25), keep if touch_count>=
+        min_touches AND newest touch within recency_days. Returns side/slope/
+        line_type/touch_count/anchor+touch points/value_now/dist_now_atr.
+      * `verify_hull.py` NEW: renders detected lines for 10 sample symbols to a
+        self-contained hull_verify.html (candles + line + anchor/touch markers).
+        User reviewed & approved. Automated check: 0/53 lines had any wrong-side
+        close between anchors (guarantee holds).
+      * `screener.py` REWRITTEN to run on detect_hull_lines. Kept: LIQUIDITY gate,
+        volume context, setup labelling (_label_side_sign). Confidence is now
+        touch-count-LED (cleanliness is guaranteed): _confidence(touch_count,
+        fit_atr, vol_ratio) = 100*(0.7*count + 0.3*tight + vol), count=min(1,
+        touches/target_touches), tight=1-fit/touch_tol. Dropped from the pipeline
+        (superseded by rules 1-3): proximity gate, far-side containment, dispersion,
+        bars_since recency, post-touch respect, violation counting. screen_clean
+        signature unchanged so build_site/app.py/bulk_load are untouched.
+      * KEY PROPERTY: the hull's most recent edge always passes through TODAY, so
+        ~every liquid stock has a support+resistance line "touching now" -> the raw
+        3-rule set is huge (5953 across 1166 symbols; a proximity gate barely helps).
+        The real strength dial is min_touches. User chose min_touches=6 + a 50%
+        confidence floor; target_touches raised 5->10 so ranking spreads (else all
+        >=5-touch lines tie). Result: 509 setups (1d256/1w171/1m82), touch 6-27,
+        conf 50-93.8, ranked strongest-first. Frontend UNCHANGED (same JSON shape).
+      * trendlines.py kept (untouched) — now used ONLY by the legacy contact_sheet.
+        Old config keys (timeframes/touch_tol_atr/max_fit_atr/max_violations/
+        max_farside_atr/etc.) remain for contact_sheet; the live path uses the
+        `hull:` + `reliability:` + `confidence:` blocks. NOT yet deployed — awaiting
+        user OK on the 509-list before pushing live.
+    * Horizontal-vs-trend label fix: classify on the line's TOTAL price change over
+      its drawn extent (first anchor -> now) in ATR (hull.horizontal_total_atr=0.5),
+      NOT total-move-between-anchors (mislabels short-steep lines like SOUTHWEST) and
+      NOT slope-per-bar (mislabels long-gentle lines like CIEINDIA). 490 trend / 19
+      horizontal; all horizontals verified genuinely flat (<0.5 ATR total move).
+    * Freshness stamps: build_site.py writes site/data/meta.json {generated_at
+      (IST = UTC+5:30, cloud-correct), data_through (= MAX candle date in DB, the
+      real data-freshness signal), setups}; static/app.js loadMeta() shows
+      "data through <date> · built <ts>" in the top bar. Missing meta = silent no-op.
+      (generated_at alone was misleading — it's build time, not fetch time.)
+    * CLEANUP before deploy: DELETED trendlines.py (old fit-and-filter detector,
+      superseded by hull_lines.py) and contact_sheet.py (matplotlib dev tool, sole
+      user of trendlines — superseded by verify_hull.py). Removed matplotlib + numpy
+      from requirements.txt (numpy was only used by trendlines; hull_lines is pure
+      Python). config.yaml trimmed to ONLY live keys (hull/on_line_atr/confidence/
+      min_confidence/reliability) — dropped all old-detector keys (timeframes,
+      touch_tol_atr, buffer_atr, proximity_tol_atr, min_touches, max_fit_atr,
+      max_violations, max_wrongside_atr, max_fit_atr_horizontal,
+      max_hist_wrongside_atr_horizontal, top-level horizontal_total_atr,
+      max_farside_atr, top_n) and dead reliability keys (volume_confirmation,
+      recency, max_stale_bars, dispersion, min_touch_span_frac). hull_verify.html
+      gitignored. KEPT: config.py (used by angel.py), verify_hull.py (line-inspection
+      tool), app.py + fastapi/uvicorn (legacy local server, imports clean, inert for
+      deploy). 16 .py files remain, all import OK; build_cache+build_site verified.
+
+### Deployment ops (GitHub Pages + Actions) — how it actually works
+- Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
+  committed; .env/nse_data.db/screen_cache.json/instruments.json/site/ gitignored.
+- Secrets (repo → Settings → Secrets → Actions): ANGEL_API_KEY, ANGEL_CLIENT_CODE,
+  ANGEL_MPIN, ANGEL_TOTP_SECRET. Pages source = GitHub Actions.
+- Workflow `.github/workflows/deploy.yml`: daily cron 13:00 UTC (18:30 IST) +
+  manual (workflow_dispatch, has `skip_fetch` boolean input). Steps: checkout,
+  py3.12, pip install, restore DB (actions/cache), SEED DB from `db-seed` release
+  if no cache OR skip_fetch=true, run bulk_load (|| continue) or build_cache,
+  build_site, deploy ./site to Pages.
+- DB SEED: nse_data.db (248MB, 2061 stocks) uploaded as a GitHub RELEASE asset
+  tagged `db-seed` (repo file limit is 100MB so DB can't be committed; releases
+  allow 2GB). The cloud downloads the seed instead of cold-fetching ~2000 stocks
+  (Angel rate-limits that hard). Refresh baseline occasionally:
+    bulk_load.py (local) then  gh release upload db-seed nse_data.db --clobber
+- Fast rebuild from seed (no fetch): Actions → Run workflow → tick skip_fetch
+  (or `gh workflow run deploy.yml -f skip_fetch=true`). ~3-5 min.
+
+### Deployment gotchas hit & fixed (don't reintroduce)
+- instruments._download_master: large ~35MB file drops mid-download
+  (IncompleteRead) -> now uses requests + retry + json-validate before caching.
+- Angel HISTORICAL API rate-limits a 2000-stock burst ("exceeding access rate").
+  bulk_load now FAST-SKIPS rate-limited stocks + circuit-breaker aborts fetch
+  after 25 consecutive rate errors (earlier a 15s/30s backoff caused a multi-HOUR
+  crawl — removed). Daily incremental of ~2000 stocks is inherently ~1hr and may
+  throttle; if chronic, re-seed instead of relying on cloud fetch.
+- Failed runs cached a PARTIAL DB; the seed step only downloaded when no file
+  existed, so the junk cache won -> only 17 setups. Fix: skip_fetch force-downloads
+  seed (--clobber); deleted polluted caches (gh cache delete).
+- requirements.txt was missing numpy+pyyaml (pip-installed only) -> added; would
+  have broken the Action.
 
 ### Still TODO / iterate
 - USER MUST run `bulk_load.py` to fetch EIDPARRY (needs login) before it appears

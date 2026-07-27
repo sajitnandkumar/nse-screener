@@ -16,6 +16,7 @@
         <button data-tf="1m">1M</button>
       </div>
       <span class="spacer"></span>
+      <span class="generated" id="generated"></span>
       <span class="count" id="count"></span>
     </div>
 
@@ -26,12 +27,13 @@
             <thead>
               <tr>
                 <th class="l">Symbol</th>
+                <th>LTP</th>
                 <th class="l">Setup</th>
                 <th class="l">Line</th>
                 <th>Touch</th>
                 <th>Conf</th>
                 <th>&Delta;ATR</th>
-                <th>TF</th>
+                <th>Vol&times;</th>
               </tr>
             </thead>
             <tbody id="list-body"></tbody>
@@ -43,6 +45,11 @@
       <div id="right">
         <div id="chart-header">
           <span class="h-meta" id="chart-header-text">Select a stock from the list.</span>
+          <span class="spacer"></span>
+          <div class="tf-toggle" id="chart-type-toggle">
+            <button data-ct="candles" class="active">Candles</button>
+            <button data-ct="line">Line</button>
+          </div>
         </div>
         <div id="chart"></div>
       </div>

@@ -13,6 +13,9 @@ screen_cache.json
 # Generated static site (rebuilt by build_site.py / the Action)
 site/
 
+# Generated hull line verification page (regenerable via verify_hull.py)
+hull_verify.html
+
 # Python
 venv/
 __pycache__/

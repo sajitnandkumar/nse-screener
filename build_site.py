@@ -16,6 +16,7 @@ import json
 import os
 import re
 import shutil
+from datetime import datetime, timezone, timedelta
 
 import db
 import screener
@@ -44,6 +45,17 @@ def main():
 
     with open(os.path.join(DATA_DIR, "screener.json"), "w") as f:
         json.dump(candidates, f)
+
+    # UI freshness stamps. `data_through` = newest price bar we actually have (the
+    # real data-freshness signal); `generated_at` = when this screen/site was built.
+    # IST = UTC + 5:30, so build time reads correctly locally or in the UTC Action.
+    with db.connect() as con:
+        data_through = con.execute("SELECT MAX(date) FROM candles").fetchone()[0]
+    ist = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+    with open(os.path.join(DATA_DIR, "meta.json"), "w") as f:
+        json.dump({"generated_at": ist.strftime("%Y-%m-%d %H:%M IST"),
+                   "data_through": data_through,
+                   "setups": len(candidates)}, f)
 
     # One candle file per (symbol, timeframe) that appears in the results.
     pairs = sorted({(c["symbol"], c["timeframe"]) for c in candidates})
