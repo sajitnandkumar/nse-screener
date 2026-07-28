@@ -554,6 +554,15 @@ be runnable and reviewable before moving to the next.
     bulk_load.py (local) then  gh release upload db-seed nse_data.db --clobber
 - Fast rebuild from seed (no fetch): Actions → Run workflow → tick skip_fetch
   (or `gh workflow run deploy.yml -f skip_fetch=true`). ~3-5 min.
+- DATA FRESHNESS RULE (learned 2026-07-28): use a NORMAL fetch for routine deploys
+  (`gh workflow run deploy.yml` with NO skip_fetch). skip_fetch force-downloads the
+  ~Jul-23 db-seed AND saves it as the newest actions/cache, CLOBBERING the cron's
+  fresh data (live data reverted to Jul 23 this way). The daily cron (0 13 * * 1-5,
+  weekday 18:30 IST) DOES fetch (~57min real runs on Jul 24/27); it self-heals
+  (bulk_load fetches last-stored -> today, so a missed/delayed day backfills next
+  run) and degrades safely (|| continue publishes freshest-available). GitHub cron
+  is best-effort — fires same weekday but can be 1-2h late. Verify freshness after
+  any deploy via the live data/meta.json `data_through`.
 
 ### Deployment gotchas hit & fixed (don't reintroduce)
 - instruments._download_master: large ~35MB file drops mid-download
