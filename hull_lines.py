@@ -79,6 +79,11 @@ def _make_line(closes, dates, a, b, side, start, atrv, tol, cfg, timeframe):
     # total move too (trend); only a genuinely flat line stays "horizontal". Neither
     # total-move-between-anchors nor slope-per-bar alone gets both right.
     total_move_atr = abs(slope) * (last - a) / atrv
+    # Reject trend-envelope lines: a line that travels this many ATR over its drawn
+    # extent is the ceiling/floor of a runaway move (e.g. the upper hull of a 65x
+    # uptrend), not a tradeable S/R level.
+    if total_move_atr > cfg.get("max_travel_atr", 1e9):
+        return None
     line_type = ("horizontal" if total_move_atr < cfg.get("horizontal_total_atr", 0.5)
                  else "trendline")
 

@@ -16,6 +16,10 @@ site/
 # Generated hull line verification page (regenerable via verify_hull.py)
 hull_verify.html
 
+# Full backtest output (large, regenerable). The tiny backtest_summary.json is
+# committed on purpose so the deployed screener can show Hist% without a cloud run.
+backtest_results.json
+
 # Python
 venv/
 __pycache__/

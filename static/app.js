@@ -8,11 +8,24 @@ const LC = LightweightCharts;
 const state = {
   tf: "1d", key: null, chartType: "candles", cand: null, candles: null,
   // Live filters (defaults per spec). dAtrMax hides setups not near their line.
-  filters: { dAtrMax: 0.5, minTouch: 6, minConf: 80, minTurnover: 5, setupType: "All" },
+  filters: { dAtrMax: 0.5, minTouch: 6, minConf: 80, minTurnover: 5, setupType: "All", minRev: 0 },
   sort: { col: "confidence", dir: "desc" },   // default: CONF descending
 };
 let ALL = [];          // every setup, from data/screener.json
 let currentRows = [];  // rows currently shown (tf + filters + sort)
+let SUMMARY = null;    // backtest per-band reliability (data/backtest_summary.json), if shipped
+
+// Backtested stats for a setup's category + timeframe + CONF band (from the summary):
+// reversed% and avg forward move (last horizon = @14). null if not shipped / too thin.
+function bandHold(c) {
+  if (!SUMMARY || !SUMMARY.cat) return null;
+  const cd = SUMMARY.cat[c.setup]; if (!cd) return null;
+  const tfd = cd[c.timeframe]; if (!tfd) return null;
+  const band = SUMMARY.bands.find(([lab, lo, hi]) => c.confidence >= lo && c.confidence < hi);
+  if (!band) return null;
+  const v = tfd[band[0]];
+  return v && v.n ? { rev: v.rev, move: v.move, n: v.n, band: band[0] } : null;
+}
 
 // Must match build_site.py's _safe(): non-alphanumeric -> "_"
 const safeName = (s) => s.replace(/[^A-Za-z0-9]/g, "_");
@@ -30,10 +43,16 @@ const COLUMNS = [
   { key: "line_type",    label: "Line",   align: "l", get: (c) => (c.line_type === "trendline" ? "trend" : "horiz"), sort: (c) => c.line_type, cell: "l dim" },
   { key: "touches",      label: "Touch",  num: true, get: (c) => c.touches,          sort: (c) => c.touches },
   { key: "confidence",   label: "Conf",   num: true, get: (c) => Math.round(c.confidence) + "%", sort: (c) => c.confidence },
+  { key: "hist",         label: "Rev%",   num: true,
+    get: (c) => { const h = bandHold(c); return h && h.rev != null ? Math.round(h.rev) + "%" : "—"; },
+    sort: (c) => { const h = bandHold(c); return h && h.rev != null ? h.rev : -1; },
+    cellCls: (c) => { const h = bandHold(c); return h && h.n >= 100 ? "" : "dim"; } },
   { key: "distance_atr", label: "ΔATR",   num: true, get: (c) => fmtSigned(c.distance_atr), sort: (c) => c.distance_atr ?? 0 },
   { key: "vol_ratio",    label: "Vol×",   num: true, get: (c) => fmtVol(c.vol_ratio), sort: (c) => c.vol_ratio ?? -1,
     cellCls: (c) => (c.vol_ratio >= 1.5 ? "price-up" : "dim") },
 ];
+// Hist% only appears when the backtest summary was shipped with the build.
+const cols = () => COLUMNS.filter((c) => c.key !== "hist" || SUMMARY);
 
 // A row passes if it clears every active filter.
 function passesFilters(c) {
@@ -42,6 +61,7 @@ function passesFilters(c) {
   if (c.touches < f.minTouch) return false;
   if (c.confidence < f.minConf) return false;
   if ((c.turnover_cr ?? 0) < f.minTurnover) return false;
+  if (f.minRev > 0) { const h = bandHold(c); if (!h || h.rev == null || h.rev < f.minRev) return false; }
   if (f.setupType === "Breakouts")
     return c.setup === "Resistance Breakout" || c.setup === "Support Breakdown";
   if (f.setupType !== "All") return c.setup === f.setupType;
@@ -60,8 +80,14 @@ function sortRows(rows) {
 
 // ---- data load ---------------------------------------------------------
 async function loadAll() {
-  const res = await fetch("data/screener.json");
-  ALL = await res.json();
+  const [scr, sum] = await Promise.all([
+    fetch("data/screener.json").then((r) => r.json()),
+    fetch("data/backtest_summary.json").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+  ]);
+  ALL = scr;
+  SUMMARY = sum;
+  if (SUMMARY && SUMMARY.page) document.getElementById("bt-link").style.display = "";  // link only if the page is deployed
+  if (SUMMARY) document.getElementById("rev-filter").style.display = "";               // Rev% filter only when the backtest summary is shipped
   loadList();
 }
 
@@ -84,7 +110,7 @@ function renderHead() {
   const head = document.getElementById("list-head");
   head.innerHTML = "";
   const tr = document.createElement("tr");
-  COLUMNS.forEach((col) => {
+  cols().forEach((col) => {
     const th = document.createElement("th");
     if (col.align === "l") th.className = "l";
     const active = state.sort.col === col.key;
@@ -123,7 +149,7 @@ function loadList() {
     const tr = document.createElement("tr");
     tr.dataset.key = key;
     if (key === state.key) tr.classList.add("selected");
-    tr.innerHTML = COLUMNS.map((col) => {
+    tr.innerHTML = cols().map((col) => {
       const cls = [col.cell || "", col.cellCls ? col.cellCls(c) : ""].join(" ").trim();
       return `<td${cls ? ` class="${cls}"` : ""}>${col.get(c)}</td>`;
     }).join("");
@@ -150,6 +176,7 @@ function setupFilters() {
   bind("f-touch", "minTouch", (v) => parseInt(v, 10));
   bind("f-conf", "minConf", parseFloat);
   bind("f-turn", "minTurnover", parseFloat);
+  bind("f-rev", "minRev", parseFloat);
 
   document.querySelectorAll("#f-type button").forEach((btn) => {
     btn.addEventListener("click", () => {
@@ -295,7 +322,11 @@ function renderHeader(c) {
     ${sep}
     <span class="h-meta"><b>${fmtSigned(c.distance_atr)}</b> ATR from line</span>
     ${sep}
-    <span class="h-meta">last touch <b>${c.last_touch}</b></span>`;
+    <span class="h-meta">last touch <b>${c.last_touch}</b></span>
+    ${SUMMARY ? `${sep}<span class="h-meta">backtest: this band reversed <b>${(() => {
+      const h = bandHold(c);
+      return h && h.rev != null ? Math.round(h.rev) + "%, avg move @14 " + (h.move[h.move.length - 1] >= 0 ? "+" : "") + h.move[h.move.length - 1] + "% (n=" + h.n + ")" : "—";
+    })()}</b></span>` : ""}`;
 }
 
 // ---- timeframe toggle --------------------------------------------------

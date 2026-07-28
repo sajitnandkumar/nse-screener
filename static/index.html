@@ -16,6 +16,7 @@
         <button data-tf="1m">1M</button>
       </div>
       <span class="spacer"></span>
+      <a class="bt-link" id="bt-link" href="backtest.html" style="display:none">Backtest&nbsp;&#8599;</a>
       <span class="generated" id="generated"></span>
       <span class="count" id="count"></span>
     </div>
@@ -27,6 +28,7 @@
           <label>Touch &ge;<input type="number" id="f-touch" step="1" min="1"></label>
           <label>Conf &ge;<input type="number" id="f-conf" step="1" min="0" max="100"></label>
           <label>&#8377;cr &ge;<input type="number" id="f-turn" step="1" min="0"></label>
+          <label id="rev-filter" style="display:none" title="Backtested reversal rate for this setup's CONF band + timeframe">Rev% &ge;<input type="number" id="f-rev" step="5" min="0" max="100"></label>
           <div class="chips" id="f-type">
             <button data-t="All" class="active">All</button>
             <button data-t="Support Reversal">Support&nbsp;Rev</button>

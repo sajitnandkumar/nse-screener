@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSE S/R Backtest</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    #bt-main { overflow-y: auto; padding: 20px 24px 48px; }
+    #topbar a { color: var(--ink-muted); font-family: var(--mono); font-size: 12px; text-decoration: none; }
+    #topbar a:hover { color: var(--ink); }
+    #bt-meta { color: var(--ink-dim); font-family: var(--mono); font-size: 12px; }
+
+    section { margin: 0 0 30px; }
+    section h2 { font-family: var(--mono); font-size: 12px; letter-spacing: .1em; text-transform: uppercase;
+                 color: var(--ink-muted); margin: 0 0 14px; font-weight: 500; }
+
+    #controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 10px 14px;
+      border: 1px solid var(--border); background: var(--panel); font-family: var(--mono); font-size: 12px; color: var(--ink-muted); }
+    #controls .c-lbl { color: var(--ink-dim); text-transform: uppercase; letter-spacing: .08em; font-size: 11px; }
+    #controls .chips { display: inline-flex; border: 1px solid var(--border); }
+    #controls .chips button { font-family: var(--mono); font-size: 12px; padding: 3px 10px; background: transparent;
+      color: var(--ink-muted); border: none; border-right: 1px solid var(--border); cursor: pointer; }
+    #controls .chips button:last-child { border-right: none; }
+    #controls .chips button:hover { color: var(--ink); }
+    #controls .chips button.active { background: var(--row-sel); color: var(--ink); }
+    #controls .c-hint { color: var(--ink-dim); margin-left: auto; }
+
+    /* Panel 1 cards */
+    .cards { display: flex; gap: 18px; flex-wrap: wrap; }
+    .card { border: 1px solid var(--border); background: var(--panel); padding: 14px 18px; min-width: 300px; }
+    .card .ct { font-family: var(--mono); font-size: 13px; color: var(--ink); margin-bottom: 10px; }
+    .card .big { font-family: var(--mono); font-size: 30px; line-height: 1; }
+    .card .lbl { font-family: var(--mono); font-size: 10px; color: var(--ink-dim); text-transform: uppercase; letter-spacing: .06em; margin-top: 6px; }
+    .card .row2 { display: flex; gap: 28px; margin-top: 6px; }
+    .verdict { margin-top: 18px; padding: 14px 16px; border: 1px solid var(--border); background: var(--panel);
+      border-left: 2px solid var(--ink-muted); font-family: var(--mono); font-size: 14px; color: var(--ink); max-width: 1000px; line-height: 1.55; }
+
+    /* tables */
+    .bt-table { border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+    .bt-table th { text-align: right; color: var(--ink-dim); font-weight: 500; font-size: 10px; text-transform: uppercase;
+      letter-spacing: .05em; padding: 7px 14px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .bt-table th.l { text-align: left; }
+    .bt-table td { text-align: right; padding: 5px 14px; border-bottom: 1px solid var(--border-dim); white-space: nowrap; }
+    .bt-table td.l { text-align: left; }
+    .bt-table tr.grp td { color: var(--ink); border-bottom: 1px solid var(--border); padding-top: 12px; }
+    .bt-table tr.sub td.l { color: var(--ink-muted); padding-left: 24px; }
+    .bt-table tr.thin td { opacity: .5; }
+    .bt-table .med { color: var(--ink-dim); font-size: 10px; }
+    .legend { font-family: var(--mono); font-size: 11px; color: var(--ink-dim); margin-top: 10px; max-width: 820px; line-height: 1.5; }
+    .two-col { display: flex; gap: 40px; flex-wrap: wrap; }
+
+    /* Panel 5 drill */
+    #p5-wrap { display: flex; gap: 20px; align-items: flex-start; }
+    #p5-list { flex: 0 0 44%; max-height: 380px; overflow-y: auto; border: 1px solid var(--border); }
+    #p5-hint { padding: 16px; font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
+    #p5-list th { position: sticky; top: 0; background: var(--panel); cursor: default; }
+    #p5-list tbody tr { cursor: pointer; }
+    #p5-list tbody tr:hover td, #p5-list tbody tr.sel td { background: var(--row-sel); }
+    #p5-right { flex: 1; min-width: 0; }
+    #p5-chart-hdr { font-family: var(--mono); font-size: 12px; color: var(--ink-muted); margin-bottom: 8px; min-height: 18px; }
+    #p5-chart-hdr b { color: var(--ink); }
+    #p5-chart { height: 340px; border: 1px solid var(--border); }
+
+    .coverage { font-family: var(--mono); font-size: 13px; color: var(--ink-muted); line-height: 1.6; border: 1px solid var(--border);
+      border-left: 2px solid var(--ink-dim); background: var(--panel); padding: 14px 16px; max-width: 900px; }
+    .coverage b { color: var(--ink); }
+    .up { color: var(--up); } .down { color: var(--down); } .dimc { color: var(--ink-dim); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="topbar">
+      <span class="title">NSE&nbsp;·&nbsp;S/R Backtest</span>
+      <a href="index.html">&larr;&nbsp;screener</a>
+      <span class="spacer"></span>
+      <span id="bt-meta"></span>
+    </div>
+    <div id="bt-main">
+      <section id="controls">
+        <span class="c-lbl">forward window —</span>
+        <span class="chips" id="c-h"></span>
+        <span class="c-hint">signed close-to-close move; + = price rose (read by setup direction)</span>
+      </section>
+
+      <section id="p1">
+        <div class="cards" id="p1-cards"></div>
+        <div class="verdict" id="p1-verdict">Loading…</div>
+      </section>
+
+      <section id="p2">
+        <h2>Outcome &amp; forward returns — by setup type</h2>
+        <table class="bt-table" id="p2-table"></table>
+        <div class="legend">REVERSED = the line held and price turned; BROKE = a close pushed &gt;0.5 ATR
+          through it within 14 candles. Move = average signed close-to-close %, median in grey.
+          A support reversal is a long (up = good); a resistance reversal is a short (down = good).</div>
+      </section>
+
+      <section id="p3">
+        <h2>Is CONF predictive? — reversed% &amp; forward move by CONF band</h2>
+        <div class="two-col" id="p3-wrap"></div>
+        <div class="legend">Rising reversed% / better move as CONF climbs = CONF works. Bands with n&lt;100 are dimmed.</div>
+      </section>
+
+      <section id="p4">
+        <h2>Breakdown — reversed% &amp; forward move by slice</h2>
+        <table class="bt-table" id="p4-table"></table>
+      </section>
+
+      <section id="p5">
+        <h2>Drill-down — the evidence</h2>
+        <div id="p5-wrap">
+          <div id="p5-list">
+            <div id="p5-hint">Click a CONF-band row (Panel 3) or a slice (Panel 4) to list its setups.</div>
+            <table class="bt-table" id="p5-table" style="display:none">
+              <thead><tr><th class="l">Symbol</th><th class="l">As-of</th><th>CONF</th><th>Outcome</th><th>Δ@14</th></tr></thead>
+              <tbody id="p5-body"></tbody>
+            </table>
+          </div>
+          <div id="p5-right">
+            <div id="p5-chart-hdr">Select a setup to see its chart at the as-of date.</div>
+            <div id="p5-chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section id="cov">
+        <h2>Coverage &amp; honesty</h2>
+        <div id="cov-body" class="coverage"></div>
+      </section>
+    </div>
+  </div>
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <script src="backtest.js"></script>
+</body>
+</html>

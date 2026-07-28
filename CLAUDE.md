@@ -418,6 +418,124 @@ be runnable and reviewable before moving to the next.
        screener.screen_clean: collapse to ONE line per (symbol, timeframe, side) =
        highest (confidence, touches). 771 -> 708 setups; verified 0 (sym,tf,side)
        has >1 row. NOT yet deployed (committed; redeploy pending user OK).
+     NOTE: Slice 23 (CONF/filter/sort/dedup) IS deployed live (commit 346bfb8,
+     skip_fetch run 30304857630 succeeded 2026-07-28; seed data ~Jul 24).
+
+- [~] Slice 24: BACKTEST engine + summary UX (2026-07-28). Does the screener have
+      edge / is CONF predictive? NOTE: no backtest existed before — built it.
+      * `backtest.py` — WALK-FORWARD, honest as-of (hull detected only on data up
+        to each as-of date via detect_hull_lines(rows[:t+1]) — no lookahead). When
+        price is within proximity_atr of a line, record the setup + as-of CONF, then
+        scan forward once to fb_max and store the first BREACH OFFSET per move_atr in
+        the sweep grid (config backtest.sweep.move_atr[0.5,1,1.5] x forward_bars
+        [20,40,60]). Reversal setups only (v1). Non-overlap gap = default fb; loop
+        leaves fb_max room (no censoring). Outcome = "line held as boundary" i.e.
+        HELD iff no close breached by >move_atr within forward_bars (a SURVIVAL test).
+        Writes backtest_results.json (~36.7k instances, 2021-03 -> 2026-04).
+      * `sweep.py` — prints the 3x3 grid (overall + per-CONF-bucket staircase + mono
+        flags + top-bucket merge). FINDINGS: staircase monotonic in populated bands
+        across ALL 9 cells (ranking robust). Overall never clears 50% (max 32% at
+        1.5ATR/20bar). Top band clears 50% ONLY at 1.5/20 (58%). Survival test =>
+        LONGER horizon LOWERS hold rate (counterintuitive; move_atr is the real lever).
+      * `build_backtest.py` -> site/backtest.html + site/data/backtest.json (compact:
+        per-instance breach offsets, so the client derives HELD/BROKE for any cell).
+      * UX (static/backtest.html + backtest.js) Panels 1+2: verdict scorecard +
+        CONF calibration bars, with LIVE move_atr/forward_bars chips (instant
+        re-aggregation off breach offsets). CONF bands = <70/70-79/80-84/85-100 (top
+        merged; old 90-100 was thin n~55 -> 85-100 n~703). Bands n<100 flagged
+        "thin · low-trust". Verdict DERIVED: leads with ranking-validated (monotonic),
+        frames edge as definition-dependent (never "no edge" from one definition).
+      * Panel 3 (breakdown table: setup/line/touch-band/timeframe, sortable, respects
+        sliders) + Panel 4 (coverage/honesty: n everywhere, n<100 dimmed+"thin",
+        walk-forward disclosure) DONE. Breakdown insight: more touches = higher hold
+        (13+ =46%), Support Rev (27%) > Resistance Rev (20%), horiz > trend.
+      * COVERAGE GAP found + disclosed in Panel 4: 1M has 0 instances — the up-to-60
+        forward window exceeds ~72 monthly bars (loop needs len-fb_max room). Backtest
+        covers 1D+1W only; monthly needs a PER-TIMEFRAME forward horizon (TODO).
+      * DEFINITION FIXES DONE (both changed the verdict a lot):
+        - PER-TIMEFRAME horizons config backtest.horizons {1d:[20,40,60], 1w:[4,9,13],
+          1m:[1,2,3]} = ~1/2/3 months each. 1M NOW COVERED (0 -> 3510 instances;
+          total 37417). UI horizon control = Short/Med/Long (per-tf bars).
+        - ENDPOINT mode alongside SURVIVAL. Engine records per instance: fbo (first
+          wrong-side breach offset per move -> survival) + wd (wrong-side ATR at each
+          horizon bar -> endpoint). UI mode toggle Survival/Endpoint. held(): survival
+          = fbo[move] None or > horizons[tf][level]; endpoint = wd[level] <= move.
+        FINDINGS: default (survival/1.0/med) staircase 15.4/43.0/49.4/51.5 — monotonic
+        AND top band 85-100 (n=939) CLEARS 50%. Endpoint >> survival at long horizon
+        (top band long: survival 45% vs endpoint 67%) — confirms survival suppresses
+        long windows. Earlier "no edge" was an artifact of daily-centric 20-bar horizon
+        + missing weekly/monthly. build_backtest.py compact rows carry b(=fbo)/wd/tf;
+        meta carries moves/horizons/levels/def_mode. sweep.py is now STALE (old breach
+        dict) — superseded by the interactive page.
+      * Panel 5 (drill-down) DONE: click a CONF bar or breakdown row -> instance list
+        (sym/as-of/CONF/HELD-BROKE/bars-to-resolve, sorted by CONF, cap 300) -> click
+        an instance -> lightweight-charts candles at the as-of date with the S/R line
+        (fi..li+H geometry) + a ↓ as-of marker (verified candle[li].time == as_of_date).
+        Outcomes/labels re-compute live with the mode/move/horizon controls. Needs
+        per-instance geometry (fi/li/sl/vn/sd/sym added to compact rows) + candle files:
+        build_backtest.py now emits site/data/ohlcv/<safe>__<tf>.json for all backtest
+        (symbol,tf) pairs (3147 files) + copies vendor. backtest.json ~9.2MB, 37417 rows.
+      * BACKTEST UX COMPLETE (Panels 1-5). Still LOCAL only — NOT wired into the
+        deploy/GitHub Action (build_site.py doesn't build the backtest; would need the
+        Action to run backtest.py which is ~5min + heavy). To view:
+        `python backtest.py && python build_backtest.py` then serve site/ -> /backtest.html.
+        sweep.py is STALE (old breach dict). Reversal setups only (breakouts = v2,
+        need an inverted follow-through outcome rule).
+
+- [x] Slice 27: CLOSE THE LOOP — travel cap + backtest-driven screener filter
+      (2026-07-28). (1) hull_lines: reject lines whose total travel over their extent
+      > hull.max_travel_atr (12) — kills trend-envelope junk (GANESHHOU = upper hull
+      of a 65x uptrend, ~40 ATR travel). total_move_atr was already computed for the
+      horiz/trend split, so the cap is one line. Live screener 708 -> 638, max travel
+      exactly 12; backtest 44412 -> 38992, verified 0 instances over 12 ATR (as-of
+      ATR). Expectancy nudged UP (Support Rev ALL +3.5 -> +3.9%@14). (2) Screener:
+      added an opt-in "Rev% >=" filter (state.filters.minRev, passesFilters uses
+      bandHold(c).rev) — backtest reversed-rate drives live filtering. Shown only when
+      the summary is loaded. NOTE: hit a STALE-results ghost (a prior bg run wrote
+      pre-cap output); verified the cap via a live _backtest_symbol_tf call then did a
+      clean pkill+re-run. Lesson: always confirm backtest_results.json freshness
+      (max-travel check) after a re-run. Still LOCAL only.
+
+- [x] Slice 26: BACKTEST REMODELLED to reversal/break + FORWARD RETURNS (2026-07-28,
+      user's methodology). Replaced survival/endpoint binary with: at each as-of setup,
+      REVERSED vs BROKE (broke = close >break_buffer_atr(0.5) past the line within
+      classify_window(14) bars) + signed CLOSE-to-close % return at return_bars [1,5,14].
+      config backtest: return_bars/break_buffer_atr/classify_window (dropped move_atr
+      grid/horizons/modes). backtest.py._forward records rets[] + break_bar. UX
+      (backtest.html/js) rebuilt: P1 verdict cards (reversed% + expectancy@featured),
+      P2 outcome&returns table (reversed/broke/all x @1/5/14 avg+median), P3 CONF-band
+      predictiveness (rev% + move by band, per category), P4 breakdown (tf/line/touch),
+      P5 drill-down (outcome + rets + chart at as-of). Featured-horizon chips (1/5/14).
+      FINDINGS (44,412 instances): Support Reversal reversed 22%/broke 78%, reversed
+      +18.6%@14 vs broke -0.8% -> ALL +3.5%@14 (POSITIVE edge via ASYMMETRY: small
+      losses, big wins — NOT hit-rate). Resistance Reversal reversed 18%, mostly break
+      UP (+5.6%) -> ALL +2.9% (weak as a short). CONF predictive: reversed% rises with
+      CONF within every tf. Screener surfacing updated: Hist% -> "Rev%" (reversed rate
+      for setup x tf x band) + header "reversed X%, avg move @14 +Y%". build_backtest
+      _write_summary now {cat: {setup: {tf: {band: {n,rev,move[]}}}}}. Local only.
+      TODO still open: GANESHHOU-type trend-envelope lines (travel cap); breakouts v2.
+
+- [~] Slice 25: SURFACE the backtest on the main screener (2026-07-28).
+      * build_backtest.py._write_summary -> backtest_summary.json (ROOT, ~500 bytes,
+        COMMITTED not gitignored): per (timeframe x CONF band) hold-rate + n at the
+        DEFAULT def (survival/1.0/med). backtest_results.json now gitignored (20MB).
+      * build_site.py: if backtest_results.json present -> build_backtest.main()
+        (full page into site/); always copy backtest_summary.json into site/data/ and
+        stamp `page` = does site/backtest.html exist (so the link only shows when the
+        page is actually deployed, never 404s).
+      * Screener (static/index.html + app.js): loads data/backtest_summary.json;
+        adds a "Hist%" column = the setup's CONF-band backtested hold rate for its tf
+        (green >=50, dim if n<100 or missing), a chart-header "this CONF band held
+        X% (n=..)" line, and a "Backtest ↗" topbar link (shown only if SUMMARY.page).
+        Column/link degrade gracefully if the summary isn't shipped.
+      * FINDING (default survival/1.0/med, per tf): 1D 9/22/26/30%, 1W 34/48/52/51%,
+        1M 82/85/91/88% — CONF ranks correctly WITHIN each tf; cross-tf gap is large
+        and DEFINITION-sensitive (1M's high rate ~ short-in-ATR 2-month horizon).
+      * DEPLOY STATUS: local build shows link+Hist%+full page. Cloud: commit
+        backtest_summary.json + static/backtest.* + backtest.py/build_backtest.py ->
+        Hist% goes live from the committed summary; full drill-down page NOT in cloud
+        (no backtest_results.json there) so link stays hidden live. NOT yet committed/
+        deployed.
 
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor

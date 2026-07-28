@@ -73,7 +73,23 @@ def main():
     shutil.copytree(os.path.join("static", "vendor"),
                     os.path.join(SITE, "vendor"), dirs_exist_ok=True)
 
-    print(f"Built {SITE}/: {len(candidates)} setups, {len(pairs)} candle files.")
+    # Backtest surfacing. If a full results file is present (local), build the full
+    # drill-down page into site/ too. Either way, ship the small summary (committed to
+    # the repo, so it works on the cloud build without re-running the backtest) — it
+    # powers the screener's Hist% column + the Backtest link.
+    if os.path.exists("backtest_results.json"):
+        import build_backtest
+        build_backtest.main()
+    if os.path.exists("backtest_summary.json"):
+        summ = json.load(open("backtest_summary.json"))
+        # `page` tells the screener whether to show the Backtest link (only if the
+        # full drill-down page was built into this deploy, so the link never 404s).
+        summ["page"] = os.path.exists(os.path.join(SITE, "backtest.html"))
+        with open(os.path.join(DATA_DIR, "backtest_summary.json"), "w") as f:
+            json.dump(summ, f)
+
+    print(f"Built {SITE}/: {len(candidates)} setups, {len(pairs)} candle files."
+          f"{' + backtest' if os.path.exists('backtest_summary.json') else ''}")
 
 
 if __name__ == "__main__":
