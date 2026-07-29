@@ -8,7 +8,11 @@ on:
   workflow_dispatch:
     inputs:
       skip_fetch:
-        description: "Skip the Angel One fetch and just build from the existing/seeded DB"
+        description: "Reset to the db-seed release and rebuild (no fetch) — use only to recover a polluted cache; CLOBBERS fresh data"
+        type: boolean
+        default: false
+      rebuild_only:
+        description: "Rebuild from the CACHED db (no fetch, no reseed) — keeps current data. Use for frontend-only deploys."
         type: boolean
         default: false
 
@@ -61,8 +65,8 @@ jobs:
           ANGEL_MPIN: ${{ secrets.ANGEL_MPIN }}
           ANGEL_TOTP_SECRET: ${{ secrets.ANGEL_TOTP_SECRET }}
         run: |
-          if [ "${{ inputs.skip_fetch }}" = "true" ]; then
-            echo "skip_fetch=true — building from existing/seeded DB without fetching."
+          if [ "${{ inputs.skip_fetch }}" = "true" ] || [ "${{ inputs.rebuild_only }}" = "true" ]; then
+            echo "no fetch — rebuilding from the existing DB (seed if skip_fetch, cache if rebuild_only)."
             python -c "import screener; print('cached setups:', screener.build_cache())"
           else
             python bulk_load.py || echo "bulk_load had errors; building site from existing data"

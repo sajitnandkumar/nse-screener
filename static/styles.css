@@ -31,6 +31,7 @@ html, body {
   font-family: var(--sans);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
+  overflow-x: hidden;   /* no page-level horizontal scroll; panes scroll internally */
 }
 
 /* Numerals and tabular data use mono so columns align. */
@@ -93,9 +94,10 @@ html, body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;   /* let the grid track hold its fraction instead of expanding to content */
   border-right: 1px solid var(--border);
 }
-#list-scroll { overflow-y: auto; min-height: 0; flex: 1; }
+#list-scroll { overflow-y: auto; overflow-x: auto; min-height: 0; flex: 1; }
 
 /* ---- Filter bar ---- */
 #filter-bar {
@@ -164,7 +166,7 @@ table.list tr.selected td.l:first-child {
 .dim { color: var(--ink-dim); }
 
 /* ---- Right pane: chart + header ---- */
-#right { display: flex; flex-direction: column; min-height: 0; }
+#right { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 #chart-header {
   padding: 10px 16px;
   border-bottom: 1px solid var(--border);
@@ -173,7 +175,9 @@ table.list tr.selected td.l:first-child {
   display: flex;
   align-items: center;
   gap: 18px;
+  flex-wrap: wrap;   /* long info line wraps instead of forcing the page wider */
 }
+#chart-header-text { flex: 1; min-width: 0; }
 #chart-header .h-sym { font-family: var(--mono); font-size: 15px; color: var(--ink); }
 #chart-header .h-setup { font-family: var(--mono); font-size: 13px; color: var(--ink-muted); }
 #chart-header .h-meta { font-family: var(--mono); font-size: 12px; color: var(--ink-dim); }
