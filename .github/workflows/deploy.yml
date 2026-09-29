@@ -71,6 +71,9 @@ jobs:
           else
             python bulk_load.py || echo "bulk_load had errors; building site from existing data"
           fi
+          # Walk-forward backtest (parallel, ~2-3 min). build_site picks up the
+          # results file and builds the full backtest page + link into the site.
+          python backtest.py || echo "backtest failed; site will ship without the backtest page"
           python build_site.py
 
       - name: Upload Pages artifact

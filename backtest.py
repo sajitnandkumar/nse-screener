@@ -100,22 +100,36 @@ def _backtest_symbol_tf(symbol, rows, tf, cfg, turnover):
     return out
 
 
-def run(sample_n=None):
+def _symbol_job(symbol):
+    """One symbol, all timeframes — runs in a worker process. Returns [] if illiquid."""
     cfg = CFG["backtest"]
-    min_turnover = CFG["reliability"]["min_turnover_cr"]
-    turnover_lb = CFG["reliability"]["turnover_lookback"]
+    daily = db.read_candles(symbol)
+    turnover = _turnover_cr(daily, CFG["reliability"]["turnover_lookback"])
+    if turnover is None or turnover < CFG["reliability"]["min_turnover_cr"]:
+        return None
+    out = []
+    for tf, rs in TFS:
+        rows = rs(daily) if rs else daily
+        out += _backtest_symbol_tf(symbol, rows, tf, cfg, turnover)
+    return out
+
+
+def run(sample_n=None):
+    """Walk-forward backtest over every liquid symbol, parallel across symbols
+    (each symbol is independent, so this scales with cores). Writes RESULTS_FILE."""
+    from multiprocessing import Pool
+    symbols = db.list_symbols()
     results, tested = [], 0
-    for symbol in db.list_symbols():
-        daily = db.read_candles(symbol)
-        turnover = _turnover_cr(daily, turnover_lb)
-        if turnover is None or turnover < min_turnover:
-            continue
-        tested += 1
-        if sample_n and tested > sample_n:
-            break
-        for tf, rs in TFS:
-            rows = rs(daily) if rs else daily
-            results += _backtest_symbol_tf(symbol, rows, tf, cfg, turnover)
+    with Pool() as pool:
+        for res in pool.imap_unordered(_symbol_job, symbols, chunksize=8):
+            if res is None:
+                continue
+            tested += 1
+            results += res
+            if sample_n and tested >= sample_n:
+                pool.terminate()
+                break
+    results.sort(key=lambda r: (r["symbol"], r["timeframe"], r["as_of_date"]))
     with open(RESULTS_FILE, "w") as f:
         json.dump(results, f)
     _summary(results, tested)

@@ -576,6 +576,10 @@ be runnable and reviewable before moving to the next.
         Δ@N->Move, n->Cases, walk-forward->no peeking.
       * REJECTED: "Simulate as on date" (would need ~85 daily snapshots ~170MB).
       * Known data caveat: prices NOT split-adjusted (SALASAR +386%@1 = a split).
+      * BACKTEST NOW LIVE: backtest.py parallelised (multiprocessing Pool over
+        symbols, 5min -> 32s local); deploy.yml runs `python backtest.py` before
+        build_site on every run (|| continue), so backtest_results.json exists in
+        the cloud and the Backtest page + link ship with each deploy.
 
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
