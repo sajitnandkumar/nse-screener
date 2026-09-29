@@ -1,39 +1,51 @@
-/* Backtest — reversal/break + forward-return model. Reads data/backtest.json
-   (per-instance: reversed flag + signed close-to-close returns at each horizon) and
-   aggregates client-side. The "forward window" chip picks which horizon the cards /
-   CONF panel / breakdown feature; the outcome table shows all horizons. */
+/* Backtest page — plain-English view of data/backtest.json.
+   Each row = one historical moment a stock sat on a trendline (walk-forward, no
+   lookahead): held (rev=1) or broke, plus the % price move at each look-ahead
+   horizon. Everything is aggregated here in the browser. */
 
 const LC = LightweightCharts;
 const safeName = (s) => s.replace(/[^A-Za-z0-9]/g, "_");
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const dfmt = (s) => { const [y, m, d] = s.slice(0, 10).split("-"); return `${+d} ${MON[+m - 1]} ${y}`; };
+const nfmt = (n) => n.toLocaleString("en-IN");
+const pct = (x, d = 1) => (x == null ? "—" : (x >= 0 ? "+" : "") + x.toFixed(d) + "%");
+const sym = (s) => s.replace("-EQ", "");
 
-let ROWS = [], META = {};
-const state = { h: 2 };                 // index into ret_bars (default = longest)
-let DRILL = null, p5chart = null, p5main = null, p5line = null, p5sel = null;
-const TOUCH_BANDS = [["6–7", 6, 8], ["8–9", 8, 10], ["10–12", 10, 13], ["13+", 13, 999]];
+let ALL = [], ROWS = [], META = {};
+const range = { from: null, to: null };
+const state = { h: 2 };                      // index into META.ret_bars
+let DRILL = null, chart = null, cSeries = null, lSeries = null, selKey = null;
 
-const fmtPct = (x) => (x == null ? "—" : (x >= 0 ? "+" : "") + x.toFixed(1) + "%");
-const clsSign = (x) => (x == null ? "dimc" : x >= 0 ? "up" : "down");
+// Plain words per setup category. A support bounce is a buy; a resistance
+// rejection is a short, so for it a price DROP is the good outcome.
+const CAT = {
+  "Support Reversal":    { title: "Buying a support bounce",        held: "Bounced",  broke: "Broke down", good: +1,
+                           what: "price was sitting on a support trendline" },
+  "Resistance Reversal": { title: "Shorting a resistance rejection", held: "Rejected", broke: "Broke out",  good: -1,
+                           what: "price was sitting under a resistance trendline" },
+};
+const goodCls = (x, cat) => (x == null ? "dim" : x * CAT[cat].good >= 0 ? "up" : "down");
+const TOUCH_BANDS = [["6–7 touches", 6, 8], ["8–9 touches", 8, 10], ["10–12 touches", 10, 13], ["13+ touches", 13, 999]];
+
+const heldPct = (rows) => (rows.length ? (100 * rows.filter((r) => r.rev).length) / rows.length : null);
+const avg = (rows, i) => (rows.length ? rows.reduce((s, r) => s + r.rets[i], 0) / rows.length : null);
 const cat = (c) => ROWS.filter((r) => r.su === c);
-const revPct = (rows) => (rows.length ? (100 * rows.filter((r) => r.rev).length) / rows.length : null);
-
-function stat(rows, i) {
-  if (!rows.length) return { n: 0, avg: null, med: null };
-  const xs = rows.map((r) => r.rets[i]).sort((a, b) => a - b);
-  return { n: xs.length, avg: xs.reduce((s, x) => s + x, 0) / xs.length, med: xs[Math.floor((xs.length - 1) / 2)] };
-}
+const H = () => META.ret_bars[state.h];
+const hWord = () => `${H()} candle${H() > 1 ? "s" : ""}`;
 
 async function load() {
   const j = await (await fetch("data/backtest.json")).json();
-  ROWS = j.rows; META = j.meta;
+  ALL = j.rows; META = j.meta;
   state.h = META.ret_bars.length - 1;
-  buildControls(); makeChart(); render();
+  range.from = META.dmin; range.to = META.dmax;
+  buildControls(); buildDates(); makeChart(); applyRange();
 }
 
 function buildControls() {
   const host = document.getElementById("c-h"); host.innerHTML = "";
   META.ret_bars.forEach((k, i) => {
     const b = document.createElement("button");
-    b.textContent = k + (k === 1 ? " candle" : " candles");
+    b.textContent = `${k} candle${k > 1 ? "s" : ""}`;
     b.className = i === state.h ? "active" : "";
     b.addEventListener("click", () => {
       state.h = i;
@@ -44,165 +56,198 @@ function buildControls() {
   });
 }
 
+function buildDates() {
+  ["from", "to"].forEach((k) => {
+    const el = document.getElementById("d-" + k);
+    el.min = META.dmin; el.max = META.dmax; el.value = range[k];
+    el.addEventListener("change", () => {
+      if (!el.value) return;
+      range[k] = el.value;
+      if (range.from > range.to) { range[k === "from" ? "to" : "from"] = el.value; document.getElementById("d-" + (k === "from" ? "to" : "from")).value = el.value; }
+      applyRange();
+    });
+  });
+}
+
+// Filter every case by its as-of date, then redraw everything from that subset.
+function applyRange() {
+  ROWS = ALL.filter((r) => r.dt >= range.from && r.dt <= range.to);
+  DRILL = null; selKey = null;
+  document.getElementById("drill-empty").style.display = "";
+  document.getElementById("drill-table").style.display = "none";
+  document.getElementById("drill-title").textContent = "Cases";
+  document.getElementById("stamp").textContent = `${nfmt(ROWS.length)} cases · ${dfmt(range.from)} → ${dfmt(range.to)}`;
+  render();
+}
+
 function render() {
-  document.getElementById("bt-meta").textContent =
-    `${META.n.toLocaleString("en-IN")} setups · ${META.dmin} → ${META.dmax} · break = >${META.break_buffer_atr} ATR within ${META.classify_window}`;
-  renderCards(); renderVerdict(); renderP2(); renderP3(); renderP4(); renderCov();
+  document.getElementById("intro").textContent = `Do trendline setups work? · ${nfmt(ROWS.length)} past setups`;
+  renderVerdicts(); renderConf(); renderSlices(); renderMethod();
   if (DRILL) renderDrill();
 }
 
-function renderCards() {
-  const el = document.getElementById("p1-cards"); el.innerHTML = "";
-  META.cats.forEach((c) => {
-    const s = cat(c), all = stat(s, state.h), rp = revPct(s);
-    const rv = stat(s.filter((r) => r.rev), state.h), bk = stat(s.filter((r) => !r.rev), state.h);
+// ---- verdict cards ----------------------------------------------------------
+const tile = (k, v, s, cls = "") => `<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="s">${s}</div></div>`;
+
+const dirOf = (r) => (r.lt === "horizontal" ? "flat" : r.sl > 0 ? "rising" : "falling");
+
+function renderVerdicts() {
+  const el = document.getElementById("verdicts"); el.innerHTML = "";
+  // Four cards: support / resistance x rising / falling line. Flat lines (few) stay in the table below.
+  META.cats.forEach((c) => ["rising", "falling"].forEach((d) => {
+    const P = CAT[c], rows = cat(c).filter((r) => dirOf(r) === d);
+    const held = rows.filter((r) => r.rev), broke = rows.filter((r) => !r.rev);
+    const a = avg(rows, state.h), ah = avg(held, state.h), ab = avg(broke, state.h), hp = heldPct(rows);
+    const goodAll = a != null && a * P.good > 0;
+    const say = c.startsWith("Support")
+      ? (goodAll ? "Bounces rare but big. <b>Net positive.</b>" : "Breaks outweigh bounces. <b>No edge.</b>")
+      : (goodAll ? "Rejections dominate. <b>Works as a short.</b>" : "Most break out and rise. <b>Weak as a short.</b>");
+    const side = c.split(" ")[0], arrow = d === "rising" ? "↗" : "↘";
     el.insertAdjacentHTML("beforeend", `
-      <div class="card">
-        <div class="ct">${c} · n=${s.length.toLocaleString("en-IN")}</div>
-        <div class="big ${clsSign(all.avg)}">${fmtPct(all.avg)}</div>
-        <div class="lbl">avg move @${META.ret_bars[state.h]} candles — all setups (expectancy)</div>
-        <div class="row2">
-          <div><div class="big" style="font-size:18px">${rp == null ? "—" : rp.toFixed(0) + "%"}</div><div class="lbl">reversed</div></div>
-          <div><div class="big ${clsSign(rv.avg)}" style="font-size:18px">${fmtPct(rv.avg)}</div><div class="lbl">when reversed</div></div>
-          <div><div class="big ${clsSign(bk.avg)}" style="font-size:18px">${fmtPct(bk.avg)}</div><div class="lbl">when broke</div></div>
+      <div class="card verdict ${rows.length < 100 ? "thin" : ""}">
+        <div class="head"><span class="t">${side} · ${d} line ${arrow}</span><span class="n">${nfmt(rows.length)} cases</span></div>
+        <div><div class="big ${goodCls(a, c)}">${pct(a)}</div><div class="k">avg move after ${hWord()}</div></div>
+        <div class="tiles three">
+          ${tile(P.held, hp == null ? "—" : hp.toFixed(0) + "%", "held the line")}
+          ${tile("When held", pct(ah), "avg move", goodCls(ah, c))}
+          ${tile("When broke", pct(ab), "avg move", goodCls(ab, c))}
         </div>
+        <div class="say">${say}</div>
       </div>`);
-  });
+  }));
 }
 
-function renderVerdict() {
-  const W = META.ret_bars[state.h];
-  const parts = META.cats.map((c) => {
-    const s = cat(c), all = stat(s, state.h).avg, rp = revPct(s);
-    const bk = stat(s.filter((r) => !r.rev), state.h).avg, rv = stat(s.filter((r) => r.rev), state.h).avg;
-    if (c.startsWith("Support")) {
-      return `<b>${c}:</b> ${rp.toFixed(0)}% bounce; bounces run <b>${fmtPct(rv)}</b> vs break-downs <b>${fmtPct(bk)}</b> at ${W} candles → net <b>${fmtPct(all)}</b> ` +
-        `(${all >= 0 ? "positive edge for buying the bounce — small losses, big wins" : "the asymmetry doesn't pay here"}).`;
-    }
-    return `<b>${c}:</b> only ${rp.toFixed(0)}% reject; the rest break out and run <b>${fmtPct(bk)}</b> at ${W} candles → net price <b>${fmtPct(all)}</b> ` +
-      `(${all >= 0 ? "price drifts UP — weak as a short" : "rejections dominate"}).`;
-  });
-  document.getElementById("p1-verdict").innerHTML = parts.join("<br><br>");
-}
+// ---- confidence bands ------------------------------------------------------
+const hbar = (v, max) => `<span class="hbar"><b style="width:${Math.max(0, Math.min(100, (100 * (v || 0)) / max))}%"></b></span>`;
 
-function renderP2() {
-  const rb = META.ret_bars;
-  let h = `<thead><tr><th class="l">Setup / outcome</th><th>n</th><th>%</th>` +
-    rb.map((k) => `<th>Δ@${k}</th>`).join("") + `</tr></thead><tbody>`;
+function renderConf() {
+  const wrap = document.getElementById("conf-wrap"); wrap.innerHTML = "";
+  const notes = [];
   META.cats.forEach((c) => {
-    const s = cat(c);
-    h += `<tr class="grp"><td class="l">${c}</td><td>${s.length.toLocaleString("en-IN")}</td><td></td>` + rb.map(() => "<td></td>").join("") + "</tr>";
-    const brkLbl = c.startsWith("Support") ? "broke down" : "broke out";
-    [["reversed", s.filter((r) => r.rev)], [brkLbl, s.filter((r) => !r.rev)], ["all", s]].forEach(([lab, rows]) => {
-      const pct = lab === "all" ? "" : (100 * rows.length / s.length).toFixed(0) + "%";
-      const cells = rb.map((k, i) => { const st = stat(rows, i); return `<td class="${clsSign(st.avg)}">${fmtPct(st.avg)} <span class="med">${fmtPct(st.med)}</span></td>`; }).join("");
-      h += `<tr class="sub ${rows.length < 100 ? "thin" : ""}"><td class="l">${lab}</td><td>${rows.length.toLocaleString("en-IN")}</td><td>${pct}</td>${cells}</tr>`;
+    const rows = cat(c), P = CAT[c];
+    const bands = META.bands.map(([lab, lo, hi]) => {
+      const b = rows.filter((r) => r.c >= lo && r.c < hi);
+      return { lab, lo, hi, n: b.length, hp: heldPct(b), mv: avg(b, state.h) };
     });
-  });
-  document.getElementById("p2-table").innerHTML = h + "</tbody>";
-}
-
-function renderP3() {
-  const wrap = document.getElementById("p3-wrap"); wrap.innerHTML = "";
-  const W = META.ret_bars[state.h];
-  META.cats.forEach((c) => {
-    const s = cat(c);
-    let h = `<div><div style="font-family:var(--mono);font-size:12px;color:var(--ink-muted);margin-bottom:6px">${c}</div>` +
-      `<table class="bt-table"><thead><tr><th class="l">CONF band</th><th>n</th><th>rev%</th><th>Δ@${W}</th></tr></thead><tbody>`;
-    META.bands.forEach(([lab, lo, hi]) => {
-      const b = s.filter((r) => r.c >= lo && r.c < hi), st = stat(b, state.h), rp = revPct(b);
-      h += `<tr class="p3row ${b.length && b.length < 100 ? "thin" : ""}" data-c="${c}" data-lo="${lo}" data-hi="${hi}" style="cursor:pointer">` +
-        `<td class="l">${lab}</td><td>${b.length.toLocaleString("en-IN")}</td><td>${rp == null ? "—" : rp.toFixed(0) + "%"}</td><td class="${clsSign(st.avg)}">${fmtPct(st.avg)}</td></tr>`;
+    const maxHp = Math.max(...bands.map((b) => b.hp || 0), 1);
+    let h = `<div><div class="muted" style="margin-bottom:6px;font-weight:600">${P.title}</div><table class="bt">
+      <thead><tr><th class="l">Confidence</th><th>Cases</th><th class="l">${P.held}</th><th>Move</th></tr></thead><tbody>`;
+    bands.forEach((b) => {
+      h += `<tr class="click ${b.n && b.n < 100 ? "thin" : ""}" data-c="${c}" data-lo="${b.lo}" data-hi="${b.hi}" data-lab="${b.lab}">
+        <td class="l">${b.lab.replace("<70", "under 70")}${b.lab === "<70" ? "" : "%"}</td><td>${nfmt(b.n)}</td>
+        <td class="l">${hbar(b.hp, maxHp)}${b.hp == null ? "—" : b.hp.toFixed(0) + "%"}</td>
+        <td class="${goodCls(b.mv, c)}">${pct(b.mv)}</td></tr>`;
     });
     wrap.insertAdjacentHTML("beforeend", h + "</tbody></table></div>");
+    const ok = bands.filter((b) => b.n >= 100);
+    const mono = ok.every((b, i) => i === 0 || b.hp >= ok[i - 1].hp - 0.5);
+    notes.push(`<b>${P.title}:</b> ${mono
+      ? `yes — held ${ok[0].hp.toFixed(0)}% → ${ok[ok.length - 1].hp.toFixed(0)}%, move ${pct(ok[0].mv)} → ${pct(ok[ok.length - 1].mv)}.`
+      : `mixed.`}`);
   });
-  wrap.querySelectorAll(".p3row").forEach((tr) => tr.addEventListener("click", () => {
-    const c = tr.dataset.c, lo = +tr.dataset.lo, hi = +tr.dataset.hi;
-    setDrill(`${c} · CONF ${tr.querySelector("td").textContent}`, ROWS.filter((r) => r.su === c && r.c >= lo && r.c < hi));
+  document.getElementById("conf-say").innerHTML = notes.join("<br>");
+  wrap.querySelectorAll("tr.click").forEach((tr) => tr.addEventListener("click", () => {
+    const { c, lo, hi, lab } = tr.dataset;
+    select(tr, `${CAT[c].title} · confidence ${lab}`, ROWS.filter((r) => r.su === c && r.c >= +lo && r.c < +hi), c);
   }));
 }
 
-function renderP4() {
-  const W = META.ret_bars[state.h], slices = [];
-  const add = (dim, slc, rows) => { if (rows.length) slices.push({ dim, slc, rows }); };
-  ["1d", "1w", "1m"].forEach((tf) => add("Timeframe", tf.toUpperCase(), ROWS.filter((r) => r.tf === tf)));
-  META.cats.forEach((c) => add("Setup", c, cat(c)));
-  add("Line", "trend", ROWS.filter((r) => r.lt === "trendline"));
-  add("Line", "horiz", ROWS.filter((r) => r.lt === "horizontal"));
-  TOUCH_BANDS.forEach(([lab, lo, hi]) => add("Touches", lab, ROWS.filter((r) => r.tc >= lo && r.tc < hi)));
-  let h = `<thead><tr><th class="l">Dimension</th><th class="l">Slice</th><th>rev%</th><th>Δ@${W}</th><th>n</th></tr></thead><tbody>`;
+// ---- breakdown slices ---------------------------------------------------------
+function renderSlices() {
+  const slices = [];
+  const add = (grp, lab, rows) => rows.length && slices.push({ grp, lab, rows });
+  [["1d", "Daily chart"], ["1w", "Weekly chart"], ["1m", "Monthly chart"]].forEach(([tf, lab]) => add("Timeframe", lab, ROWS.filter((r) => r.tf === tf)));
+  // Line direction: sign of the slope (flat lines are the "horizontal" type).
+  const dir = (r) => (r.lt === "horizontal" ? "flat" : r.sl > 0 ? "rising" : "falling");
+  [["support", "Support"], ["resistance", "Resistance"]].forEach(([sd, lab]) => {
+    add("Line direction", `${lab} — rising (uptrend)`, ROWS.filter((r) => r.sd === sd && dir(r) === "rising"));
+    add("Line direction", `${lab} — falling (downtrend)`, ROWS.filter((r) => r.sd === sd && dir(r) === "falling"));
+    add("Line direction", `${lab} — flat`, ROWS.filter((r) => r.sd === sd && dir(r) === "flat"));
+  });
+  TOUCH_BANDS.forEach(([lab, lo, hi]) => add("Times tested", lab, ROWS.filter((r) => r.tc >= lo && r.tc < hi)));
+  const maxHp = Math.max(...slices.map((s) => heldPct(s.rows) || 0), 1);
+
+  let h = `<thead><tr><th class="l">&nbsp;</th><th>Cases</th><th class="l">Held</th><th>Move</th></tr></thead><tbody>`;
+  let last = null;
   slices.forEach((s, i) => {
-    const st = stat(s.rows, state.h), rp = revPct(s.rows);
-    h += `<tr class="p4row ${s.rows.length < 100 ? "thin" : ""}" data-i="${i}" style="cursor:pointer">` +
-      `<td class="l dimc">${s.dim}</td><td class="l">${s.slc}</td><td>${rp == null ? "—" : rp.toFixed(0) + "%"}</td>` +
-      `<td class="${clsSign(st.avg)}">${fmtPct(st.avg)}</td><td>${s.rows.length.toLocaleString("en-IN")}</td></tr>`;
+    if (s.grp !== last) { h += `<tr class="grp"><td class="l" colspan="4">${s.grp}</td></tr>`; last = s.grp; }
+    const hp = heldPct(s.rows), mv = avg(s.rows, state.h);
+    h += `<tr class="click ${s.rows.length < 100 ? "thin" : ""}" data-i="${i}"><td class="l">${s.lab}</td><td>${nfmt(s.rows.length)}</td>
+      <td class="l">${hbar(hp, maxHp)}${hp.toFixed(0)}%</td><td class="${mv >= 0 ? "up" : "down"}">${pct(mv)}</td></tr>`;
   });
-  const t = document.getElementById("p4-table"); t.innerHTML = h + "</tbody>";
-  t.querySelectorAll(".p4row").forEach((tr) => tr.addEventListener("click", () => {
-    const s = slices[+tr.dataset.i]; setDrill(`${s.dim} · ${s.slc}`, s.rows);
+  const t = document.getElementById("slices"); t.innerHTML = h + "</tbody>";
+  t.querySelectorAll("tr.click").forEach((tr) => tr.addEventListener("click", () => {
+    const s = slices[+tr.dataset.i]; select(tr, `${s.grp}: ${s.lab}`, s.rows, null);
   }));
 }
 
-function renderCov() {
-  const thin = [...cat("Support Reversal"), ...cat("Resistance Reversal")];
-  document.getElementById("cov-body").innerHTML =
-    `<b>${META.n.toLocaleString("en-IN")}</b> setups, <b>${META.dmin} → ${META.dmax}</b>, all walk-forward ` +
-    `(each line built only from data available at its as-of date — no lookahead). Outcome: a close &gt; ` +
-    `<b>${META.break_buffer_atr} ATR</b> past the line within <b>${META.classify_window}</b> candles = broke, else reversed. ` +
-    `Returns are signed close-to-close %. Sample size <b>n</b> is on every number; anything with <b>n&lt;100</b> is dimmed ` +
-    `— a big move on a thin slice isn't trustworthy. v1 covers reversal setups only.`;
+function renderMethod() {
+  document.getElementById("method").innerHTML = `
+    <li><b>No peeking</b> — each line uses only prices available on that day.</li>
+    <li><b>Broke</b> = closed clearly through the line within ${META.classify_window} candles; otherwise <b>held</b>.</li>
+    <li><b>Move</b> = % change in close after the chosen look-ahead. For a resistance short, a fall is good (colours flipped).</li>
+    <li><b>Faded rows</b> = under 100 cases; don't trust them.</li>
+    <li>Showing ${dfmt(range.from)} → ${dfmt(range.to)} · ${nfmt(ROWS.length)} of ${nfmt(META.n)} cases · bounce/rejection setups only.</li>`;
 }
 
-/* ---- drill-down ---- */
+// ---- drill-down -------------------------------------------------------------------
 const keyOf = (r) => `${r.sym}:${r.tf}:${r.dt}:${r.vn}`;
 
-function makeChart() {
-  const el = document.getElementById("p5-chart");
-  p5chart = LC.createChart(el, {
-    layout: { background: { type: "solid", color: "#0b0e13" }, textColor: "#8a95a3", fontFamily: "ui-monospace, monospace", fontSize: 11 },
-    grid: { vertLines: { color: "#141a22" }, horzLines: { color: "#141a22" } },
-    rightPriceScale: { borderColor: "#232b36" }, timeScale: { borderColor: "#232b36" },
-    width: el.clientWidth || 600, height: 340,
-  });
-  new ResizeObserver(() => p5chart.applyOptions({ width: el.clientWidth })).observe(el);
+function select(tr, label, rows, c) {
+  document.querySelectorAll("tr.sel").forEach((x) => x.classList.remove("sel"));
+  tr.classList.add("sel");
+  DRILL = { label, rows: rows.slice(), cat: c }; selKey = null;
+  renderDrill();
+  document.getElementById("drill").scrollIntoView({ behavior: "smooth", block: "start" });
 }
-
-function setDrill(label, rows) { DRILL = { label, rows: rows.slice() }; p5sel = null; renderDrill(); document.getElementById("p5").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
 
 function renderDrill() {
-  const rows = DRILL.rows.slice().sort((a, b) => b.c - a.c), CAP = 300, shown = rows.slice(0, CAP);
-  document.getElementById("p5-hint").style.display = "none";
-  document.getElementById("p5-table").style.display = "";
-  document.querySelector("#p5 h2").textContent =
-    `Drill-down — ${DRILL.label} · ${rows.length.toLocaleString("en-IN")} setups${rows.length > CAP ? " (top 300 by CONF)" : ""}`;
-  const hi = state.h;
-  document.getElementById("p5-body").innerHTML = shown.map((r) =>
-    `<tr class="${keyOf(r) === p5sel ? "sel" : ""}"><td class="l">${r.sym.replace("-EQ", "")}</td><td class="l">${r.dt}</td>` +
-    `<td>${Math.round(r.c)}</td><td class="${r.rev ? "up" : "down"}">${r.rev ? "REVERSED" : "BROKE"}</td>` +
-    `<td class="${clsSign(r.rets[r.rets.length - 1])}">${fmtPct(r.rets[r.rets.length - 1])}</td></tr>`).join("");
-  document.querySelectorAll("#p5-body tr").forEach((tr, i) => tr.addEventListener("click", () => drawInstance(shown[i])));
+  const rows = DRILL.rows.sort((a, b) => b.c - a.c), CAP = 300, shown = rows.slice(0, CAP);
+  document.getElementById("drill-empty").style.display = "none";
+  document.getElementById("drill-table").style.display = "";
+  document.getElementById("drill-title").textContent =
+    `Cases — ${DRILL.label} (${nfmt(rows.length)}${rows.length > CAP ? ", top 300" : ""})`;
+  document.getElementById("drill-mv-th").textContent = "Move";
+  document.getElementById("drill-body").innerHTML = shown.map((r) => {
+    const P = CAT[r.su], mv = r.rets[state.h];
+    return `<tr class="click ${keyOf(r) === selKey ? "sel" : ""}"><td class="l"><span class="sym">${sym(r.sym)}</span></td><td class="l muted">${dfmt(r.dt)}</td>
+      <td>${Math.round(r.c)}%</td><td><span class="pill ${r.rev ? "up" : "down"}">${r.rev ? P.held : P.broke}</span></td>
+      <td class="${goodCls(mv, r.su)}">${pct(mv)}</td></tr>`;
+  }).join("");
+  document.querySelectorAll("#drill-body tr").forEach((tr, i) => tr.addEventListener("click", () => drawCase(shown[i])));
 }
 
-async function drawInstance(r) {
-  p5sel = keyOf(r); renderDrill();
+function makeChart() {
+  const el = document.getElementById("drill-chart");
+  chart = LC.createChart(el, {
+    layout: { background: { type: "solid", color: "#11151f" }, textColor: "#98a4b8", fontFamily: "Inter, system-ui, sans-serif", fontSize: 11 },
+    grid: { vertLines: { color: "#171c29" }, horzLines: { color: "#171c29" } },
+    rightPriceScale: { borderColor: "#222a3b" }, timeScale: { borderColor: "#222a3b" },
+    width: el.clientWidth || 600, height: 360,
+  });
+  new ResizeObserver(() => chart.applyOptions({ width: el.clientWidth })).observe(el);
+}
+
+async function drawCase(r) {
+  selKey = keyOf(r); renderDrill();
   const candles = await (await fetch(`data/ohlcv/${safeName(r.sym)}__${r.tf}.json`)).json();
   const fwd = Math.max(...META.ret_bars, META.classify_window);
   const a = Math.max(0, r.fi - 20), z = Math.min(candles.length - 1, r.li + fwd + 5);
-  if (p5main) p5chart.removeSeries(p5main);
-  if (p5line) p5chart.removeSeries(p5line);
-  p5main = p5chart.addCandlestickSeries({ upColor: "#2ea06a", downColor: "#e0554e", wickUpColor: "#2ea06a", wickDownColor: "#e0554e", borderVisible: false, priceLineVisible: false });
-  p5main.setData(candles.slice(a, z + 1));
+  if (cSeries) chart.removeSeries(cSeries);
+  if (lSeries) chart.removeSeries(lSeries);
+  cSeries = chart.addCandlestickSeries({ upColor: "#34d399", downColor: "#f87171", wickUpColor: "#34d399", wickDownColor: "#f87171", borderVisible: false, priceLineVisible: false });
+  cSeries.setData(candles.slice(a, z + 1));
   const lv = (i) => r.vn + r.sl * (i - r.li), endI = Math.min(candles.length - 1, r.li + fwd);
-  p5line = p5chart.addLineSeries({ color: "#e6edf3", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
-  p5line.setData([{ time: candles[r.fi].time, value: lv(r.fi) }, { time: candles[endI].time, value: lv(endI) }]);
-  p5main.setMarkers([{ time: candles[r.li].time, position: "aboveBar", color: "#e6b422", shape: "arrowDown", text: "as-of" }]);
-  p5chart.applyOptions({ width: document.getElementById("p5-chart").clientWidth });
-  p5chart.timeScale().fitContent();
-  document.getElementById("p5-chart-hdr").innerHTML =
-    `<b>${r.sym.replace("-EQ", "")}</b> ${r.tf} · ${r.su} · CONF <b>${Math.round(r.c)}</b> · as-of <b>${r.dt}</b> · ` +
-    `<span class="${r.rev ? "up" : "down"}">${r.rev ? "REVERSED" : "BROKE"}</span> · move @${META.ret_bars.join("/")}: ` +
-    META.ret_bars.map((k, i) => `<span class="${clsSign(r.rets[i])}">${fmtPct(r.rets[i])}</span>`).join(" / ") +
-    ` · white line = S/R line, ↓ = as-of`;
+  lSeries = chart.addLineSeries({ color: "#7c8cff", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false });
+  lSeries.setData([{ time: candles[r.fi].time, value: lv(r.fi) }, { time: candles[endI].time, value: lv(endI) }]);
+  cSeries.setMarkers([{ time: candles[r.li].time, position: "aboveBar", color: "#fbbf24", shape: "arrowDown", text: "setup fired" }]);
+  chart.timeScale().fitContent();
+
+  const P = CAT[r.su], TF = { "1d": "daily", "1w": "weekly", "1m": "monthly" }[r.tf];
+  document.getElementById("drill-hdr").innerHTML =
+    `<span class="sym">${sym(r.sym)}</span><span class="pill neutral">${TF}</span><span class="pill ${r.rev ? "up" : "down"}">${r.rev ? P.held : P.broke}</span>` +
+    `<span class="muted">fired ${dfmt(r.dt)} · confidence ${Math.round(r.c)}% · move after ${META.ret_bars.map((k, i) =>
+      `${k}: <b class="${goodCls(r.rets[i], r.su)}">${pct(r.rets[i])}</b>`).join(", ")}</span>`;
 }
 
 window.addEventListener("DOMContentLoaded", load);

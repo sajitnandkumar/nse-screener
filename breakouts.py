@@ -40,7 +40,7 @@ NAMES = {
     "HIGH52": "52-Week High / ATH",
     "BASE": "Base Breakout",
     "NR7": "NR7 / Inside Bar",
-    "GAP": "Gap-and-Go",
+    "GAP": "Gap Up / Down",
 }
 
 
@@ -105,6 +105,14 @@ class _Ctx:
         self.pidx = seen
         self._sma = None
 
+    def prev_period_bars(self, t):
+        """Indices (into self.rows) of the chart bars that make up the period BEFORE
+        bar t's period — used to anchor a level line on the candle that set it."""
+        k = self.pi(t)
+        if k is None or k < 1:
+            return []
+        return [i for i in range(t - 1, -1, -1) if self.pi(i) == k - 1][::-1]
+
     # -- period helpers ------------------------------------------------------
     def pi(self, t):
         return self.pidx.get(self.pkey(self.d[t]))
@@ -144,7 +152,7 @@ class _Ctx:
 
 
 def _event(x, code, level_name, direction, t, level, trigger, inval, lines,
-           variant=None, ctx="", rvol=None, extrapolated=False):
+           variant=None, ctx="", rvol=None, extrapolated=False, type_name=None):
     """Assemble the library's trade card. Returns None if the risk is degenerate."""
     long_ = direction == "Long"
     R = (trigger - inval) if long_ else (inval - trigger)
@@ -152,7 +160,7 @@ def _event(x, code, level_name, direction, t, level, trigger, inval, lines,
         return None
     target = trigger + R if long_ else trigger - R
     return {
-        "type": NAMES[code], "code": code, "level_name": level_name,
+        "type": type_name or NAMES[code], "code": code, "level_name": level_name,
         "variant": variant, "direction": direction, "timeframe": x.tf,
         "level": round(level, 2), "trigger": round(trigger, 2),
         "invalidation": round(inval, 2), "r": round(R, 2),
@@ -180,26 +188,30 @@ def det_prev_hl(x, t):
     if not pp or t < 1:
         return []
     PH, PL, _ = pp
+    per = "Week" if x.tf == "1d" else "Month"
     names = ("PWH", "PWL") if x.tf == "1d" else ("PMH", "PML")
     rv = _rvol(x.v, t, _rv_n(x.tf))
     cfg = BC["prev_hl"][x.tf]                       # {long_rvol, short_rvol} (null = none)
-    start = x.period_start(t)
+    # Anchor each line on the candle that actually set the level.
+    pb = x.prev_period_bars(t) or [t - 1]
+    hi_bar = max(pb, key=lambda i: x.h[i])
+    lo_bar = min(pb, key=lambda i: x.l[i])
     out = []
 
     up = PH * (1 + B)
     if x.c[t] > up and x.c[t - 1] <= up and _rv_ok(rv, cfg["long_rvol"]):
         ev = _event(x, "PREV_HL", names[0], "Long", t, PH, x.c[t], x.l[t],
-                    [_hline(names[0], PH, start, x.d[t])], rvol=rv,
-                    extrapolated=x.tf == "1m",
-                    ctx=f"closed above previous {'week' if x.tf == '1d' else 'month'} high")
+                    [_hline(names[0], PH, x.d[hi_bar], x.d[t])], rvol=rv,
+                    extrapolated=x.tf == "1m", type_name=f"Previous {per} High",
+                    ctx=f"closed above previous {per.lower()} high")
         if ev:
             out.append(ev)
     dn = PL * (1 - B)
     if x.c[t] < dn and x.c[t - 1] >= dn and _rv_ok(rv, cfg["short_rvol"]):
         ev = _event(x, "PREV_HL", names[1], "Short", t, PL, x.c[t], x.h[t],
-                    [_hline(names[1], PL, start, x.d[t])], rvol=rv,
-                    extrapolated=x.tf == "1m",
-                    ctx=f"closed below previous {'week' if x.tf == '1d' else 'month'} low")
+                    [_hline(names[1], PL, x.d[lo_bar], x.d[t])], rvol=rv,
+                    extrapolated=x.tf == "1m", type_name=f"Previous {per} Low",
+                    ctx=f"closed below previous {per.lower()} low")
         if ev:
             out.append(ev)
     return out
@@ -285,6 +297,7 @@ def det_high52(x, t):
     w_up = W * (1 + B)
     if x.c[t] > ath_up and x.c[t - 1] <= ath_up:
         name, level, var = "ATH", ATH, "ATH"
+        anchor = max(range(t), key=lambda i: x.h[i])
     elif x.c[t] > w_up and x.c[t - 1] <= w_up:
         # Weekly/monthly 52WH also require the daily close above its 200-day SMA.
         if x.tf != "1d":
@@ -292,6 +305,7 @@ def det_high52(x, t):
             if s200 is None or x.c[t] <= s200:
                 return []
         name, level, var = "52WH", W, "52WH"
+        anchor = max(range(t - n52, t), key=lambda i: x.h[i])
     else:
         return []
 
@@ -307,8 +321,9 @@ def det_high52(x, t):
         ctx += f" · ATH measured on stored history (since {x.d[0][:4]})"
     return [e for e in [_event(
         x, "HIGH52", name, "Long", t, level, x.c[t], level * (1 - BC["high52"]["invalid_pct"] / 100),
-        [_hline(name, level, x.d[max(0, t - n52)], x.d[t])],
-        variant=var, ctx=ctx, rvol=rv, extrapolated=x.tf == "1m")] if e]
+        [_hline(name, level, x.d[anchor], x.d[t])],
+        variant=var, ctx=ctx, rvol=rv, extrapolated=x.tf == "1m",
+        type_name="All-Time High" if var == "ATH" else "52-Week High")] if e]
 
 
 # ---------------------------------------------------------------------------

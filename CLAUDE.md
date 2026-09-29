@@ -556,6 +556,27 @@ be runnable and reviewable before moving to the next.
       Local only until committed/deployed. Not built: weekly 52WH "pre-alert" (info only),
       backtests of breakouts, armed-but-not-yet-triggered NR7 setups.
 
+- [x] Slice 29: UI REWRITE + backtest made readable (2026-09-29).
+      * ONE page: static/index.html now has Trendlines | Breakouts tabs (state.mode
+        "sr"/"bo") sharing one list + one chart; breakouts.html/.js DELETED. Shared
+        stylesheet static/ui.css (Inter, indigo accent, cards, pills); styles.css
+        DELETED — backtest.html uses ui.css too. Top bar stamp = "Last updated: <date>"
+        (data_through only; build time dropped).
+      * Info card = plain-English sentence + labelled tiles (srSummary/boSummary).
+        Rev% column/filter/tile REMOVED from the screener (backtest link kept).
+      * Breakouts: "Gap-and-Go" -> "Gap Up / Down"; specific type names (Previous
+        Week/Month High/Low, 52-Week High vs All-Time High via _event type_name;
+        chips filter by `code`); level lines anchored on the candle that SET the level
+        (_Ctx.prev_period_bars); volume column = "Vol surge" (RVOL, uncapped),
+        filter "Min volume surge" default 2; chart opens on last ~60 candles.
+      * backtest.html/js REWRITTEN: 2x2 verdict cards by side x line direction
+        (rising/falling from slope sign; flat in table), From/To date pickers
+        (applyRange filters rows by as-of date), short takeaways, collapsed
+        "How this was measured". Jargon mapped: reversed->Bounced/Rejected,
+        Δ@N->Move, n->Cases, walk-forward->no peeking.
+      * REJECTED: "Simulate as on date" (would need ~85 daily snapshots ~170MB).
+      * Known data caveat: prices NOT split-adjusted (SALASAR +386%@1 = a split).
+
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
   committed; .env/nse_data.db/screen_cache.json/instruments.json/site/ gitignored.

@@ -3,65 +3,49 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>NSE S/R Screener</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>NSE Screener</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="ui.css">
 </head>
 <body>
   <div id="app">
     <div id="topbar">
-      <span class="title">NSE&nbsp;·&nbsp;S/R Screener</span>
-      <div class="tf-toggle" id="tf-toggle">
-        <button data-tf="1d" class="active">1D</button>
-        <button data-tf="1w">1W</button>
-        <button data-tf="1m">1M</button>
+      <div class="brand"><i></i>NSE Screener</div>
+      <div class="seg" id="mode-toggle">
+        <button data-mode="sr" class="active">Trendlines</button>
+        <button data-mode="bo">Breakouts</button>
+      </div>
+      <div class="seg sm" id="tf-toggle">
+        <button data-tf="1d" class="active">Daily</button>
+        <button data-tf="1w">Weekly</button>
+        <button data-tf="1m">Monthly</button>
       </div>
       <span class="spacer"></span>
-      <a class="bt-link" href="breakouts.html">Breakouts&nbsp;&#8599;</a>
-      <a class="bt-link" id="bt-link" href="backtest.html" style="display:none">Backtest&nbsp;&#8599;</a>
-      <span class="generated" id="generated"></span>
-      <span class="count" id="count"></span>
+      <a class="tlink" id="bt-link" href="backtest.html" style="display:none">Backtest &#8599;</a>
+      <span class="stamp" id="generated"></span>
     </div>
 
     <div id="main">
-      <div id="left">
-        <div id="filter-bar">
-          <label>&Delta;ATR &le;<input type="number" id="f-datr" step="0.1" min="0"></label>
-          <label>Touch &ge;<input type="number" id="f-touch" step="1" min="1"></label>
-          <label>Conf &ge;<input type="number" id="f-conf" step="1" min="0" max="100"></label>
-          <label>&#8377;cr &ge;<input type="number" id="f-turn" step="1" min="0"></label>
-          <label id="rev-filter" style="display:none" title="Backtested reversal rate for this setup's CONF band + timeframe">Rev% &ge;<input type="number" id="f-rev" step="5" min="0" max="100"></label>
-          <div class="chips" id="f-type">
-            <button data-t="All" class="active">All</button>
-            <button data-t="Support Reversal">Support&nbsp;Rev</button>
-            <button data-t="Resistance Reversal">Resistance&nbsp;Rev</button>
-            <button data-t="Breakouts">Breakouts</button>
-          </div>
-          <span class="spacer"></span>
-          <span class="shown" id="shown-count"></span>
-        </div>
+      <div id="left" class="card">
+        <div id="filters"></div>
         <div id="list-scroll">
-          <table class="list">
-            <thead id="list-head"></thead>
-            <tbody id="list-body"></tbody>
-          </table>
+          <table class="list"><thead id="list-head"></thead><tbody id="list-body"></tbody></table>
           <div class="empty" id="list-empty" style="display:none"></div>
         </div>
       </div>
-
       <div id="right">
-        <div id="chart-header">
-          <span class="h-meta" id="chart-header-text">Select a stock from the list.</span>
-          <span class="spacer"></span>
-          <div class="tf-toggle" id="chart-type-toggle">
+        <div id="info" class="card"><span class="muted">Select a stock from the list.</span></div>
+        <div id="chartcard" class="card">
+          <div class="seg sm" id="ct">
             <button data-ct="candles" class="active">Candles</button>
             <button data-ct="line">Line</button>
           </div>
+          <div id="chart"></div>
         </div>
-        <div id="chart"></div>
       </div>
     </div>
   </div>
-
   <script src="vendor/lightweight-charts.standalone.production.js"></script>
   <script src="app.js"></script>
 </body>

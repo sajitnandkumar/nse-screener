@@ -2,7 +2,7 @@
 Build the backtest summary page + data into ./site (reversal/return model).
 
 Writes:
-  site/backtest.html, backtest.js, styles.css, vendor/     (frontend)
+  site/backtest.html, backtest.js, ui.css, vendor/     (frontend)
   site/data/backtest.json                                  (compact per-instance records)
   site/data/ohlcv/<SYMBOL>__<tf>.json                      (candles for the drill-down)
   backtest_summary.json (repo root, small, COMMITTED)      (per category x tf x CONF band
@@ -90,7 +90,7 @@ def main():
                 json.dump(candles, f)
             n_files += 1
 
-    for name in ("backtest.html", "backtest.js", "styles.css"):
+    for name in ("backtest.html", "backtest.js", "ui.css"):
         shutil.copy(os.path.join("static", name), os.path.join(SITE, name))
     shutil.copytree(os.path.join("static", "vendor"), os.path.join(SITE, "vendor"), dirs_exist_ok=True)
 

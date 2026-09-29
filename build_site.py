@@ -2,7 +2,7 @@
 Build the static site into ./site — a self-contained folder GitHub Pages serves.
 
 Writes:
-  site/index.html, app.js, styles.css, vendor/    (the frontend, copied)
+  site/index.html, app.js, ui.css, vendor/    (the frontend, copied)
   site/data/screener.json                          (every ranked setup)
   site/data/ohlcv/<SYMBOL>__<tf>.json              (candles for each flagged stock)
 
@@ -76,7 +76,7 @@ def main():
             json.dump(candles, f)
 
     # Copy the frontend.
-    for name in ("index.html", "app.js", "styles.css", "breakouts.html", "breakouts.js"):
+    for name in ("index.html", "app.js", "ui.css"):
         shutil.copy(os.path.join("static", name), os.path.join(SITE, name))
     shutil.copytree(os.path.join("static", "vendor"),
                     os.path.join(SITE, "vendor"), dirs_exist_ok=True)
