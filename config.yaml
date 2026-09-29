@@ -72,3 +72,37 @@ backtest:
   return_bars: [1, 5, 14]     # forward % return horizons, in that tf's candles
   break_buffer_atr: 0.5       # a close this many ATR PAST the line (wrong side) = broke
   classify_window: 14         # bars over which reversed/broke is decided
+
+# ---------------------------------------------------------------------------
+# Breakout library (breakouts.py) — implements breakout_library.md on D/W/M bars.
+# Every rule fires on a bar CLOSE beyond a level. `null` RVOL = no volume requirement.
+# Cells the library doesn't define for monthly bars reuse the weekly rule (tagged
+# `extrapolated` in the output).
+# ---------------------------------------------------------------------------
+breakouts:
+  buffer: 0.001               # b: close must clear the level by 0.1%
+  fresh_bars: {1d: 3, 1w: 2, 1m: 2}   # show setups that fired within the last N bars
+  rvol_bars: {1d: 50, 1w: 20, 1m: 12} # RVOL = bar volume / mean of the previous N bars
+  prev_hl:                    # RVOL needed for long / short
+    1d: {long_rvol: 1.5, short_rvol: 1.5}
+    1w: {long_rvol: 1.5, short_rvol: null}
+    1m: {long_rvol: 1.5, short_rvol: null}
+  cpr:
+    percentile: 20            # narrow = width <= this percentile of the last `window` periods
+    window: 60
+    min_periods: 20
+    rvol: {1d: 1.2, 1w: null, 1m: null}
+  high52:
+    bars: {1d: 252, 1w: 52, 1m: 12}   # lookback in that timeframe's bars
+    rvol: 1.5
+    invalid_pct: 3            # invalid on a close this % below the broken level
+  base:
+    dryup_max: 0.8            # SMA(V,short)/SMA(V,long) must be below this
+    1d: {lengths: [20], depth_pct: 10, prox_pct: 5,  rvol: 1.5, dryup_bars: [10, 50]}
+    1w: {lengths: [10, 14, 20, 26], depth_pct: 25, prox_pct: 10, rvol: 1.5, dryup_bars: [10, 50]}
+    1m: {lengths: [6, 9, 12], depth_pct: 35, prox_pct: 15, rvol: 1.5, dryup_bars: [3, 12]}  # extrapolated
+  nr7:
+    rvol: {1d: 1.2, 1w: null, 1m: null}
+  gap:                        # daily only
+    rvol: 2.0
+    size_atr: 0.5

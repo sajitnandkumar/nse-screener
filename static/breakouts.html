@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NSE Breakouts</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>#f-type{flex-wrap:wrap} #f-type button{white-space:nowrap;border-bottom:1px solid var(--border)}</style>
+</head>
+<body>
+  <div id="app">
+    <div id="topbar">
+      <span class="title">NSE&nbsp;·&nbsp;Breakouts</span>
+      <div class="tf-toggle" id="tf-toggle">
+        <button data-tf="1d" class="active">1D</button>
+        <button data-tf="1w">1W</button>
+        <button data-tf="1m">1M</button>
+      </div>
+      <span class="spacer"></span>
+      <a class="bt-link" href="index.html">S/R&nbsp;Lines&nbsp;&#8599;</a>
+      <span class="generated" id="generated"></span>
+    </div>
+
+    <div id="main">
+      <div id="left">
+        <div id="filter-bar">
+          <div class="chips" id="f-dir">
+            <button data-d="All" class="active">All</button>
+            <button data-d="Long">Long</button>
+            <button data-d="Short">Short</button>
+          </div>
+          <label>RVOL &ge;<input type="number" id="f-rvol" step="0.1" min="0"></label>
+          <label>&#8377;cr &ge;<input type="number" id="f-turn" step="1" min="0"></label>
+          <span class="spacer"></span>
+          <span class="shown" id="shown-count"></span>
+        </div>
+        <div id="filter-bar" style="border-top:0">
+          <div class="chips" id="f-type"></div>
+        </div>
+        <div id="list-scroll">
+          <table class="list">
+            <thead id="list-head"></thead>
+            <tbody id="list-body"></tbody>
+          </table>
+          <div class="empty" id="list-empty" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="right">
+        <div id="chart-header">
+          <span class="h-meta" id="chart-header-text">Select a breakout from the list.</span>
+        </div>
+        <div id="chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="vendor/lightweight-charts.standalone.production.js"></script>
+  <script src="breakouts.js"></script>
+</body>
+</html>

@@ -537,6 +537,25 @@ be runnable and reviewable before moving to the next.
         (no backtest_results.json there) so link stays hidden live. NOT yet committed/
         deployed.
 
+- [x] Slice 28: BREAKOUT LIBRARY on D/W/M (2026-09-29). Implements
+      `breakout_library.md` (intraday parts ignored). `breakouts.py` = 6 detectors, all
+      firing on a bar CLOSE beyond a level with a 0.1% buffer + the library's trade card
+      (trigger, invalidation, R, target = trigger +/- 1R): Previous High/Low (PWH/PWL
+      daily, PMH/PML weekly+monthly), CPR (TC/BC, narrow = <=20th pctile of 60 periods),
+      52-Week High/ATH (200DMA filter on W/M), Base Breakout (depth/proximity/dry-up/
+      trend), NR7/Inside/NR7ID (trigger within 2 bars), Gap-and-Go (daily only).
+      ORB has no D/W/M form (library: not applicable); Gap-and-Go W/M excluded (library:
+      not a default preset). Where the library is silent for MONTHLY, the weekly rule is
+      reused and rows are tagged `extrapolated` (shown with * in the UI). All knobs in
+      config.yaml `breakouts:`. Shows events fired within `fresh_bars` {1d:3,1w:2,1m:2}
+      of the latest bar; W/M newest bar may be `forming` (flagged). RVOL = bar volume /
+      mean of previous N bars. Prices are NOT split-adjusted (library data rule) and ATH
+      = max over stored history (since 2020). build_site.py writes data/breakouts.json;
+      new pages static/breakouts.html + breakouts.js (list + chart with level lines,
+      invalid/target price lines, trigger marker); cross-linked from the S/R page.
+      Local only until committed/deployed. Not built: weekly 52WH "pre-alert" (info only),
+      backtests of breakouts, armed-but-not-yet-triggered NR7 setups.
+
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
   committed; .env/nse_data.db/screen_cache.json/instruments.json/site/ gitignored.

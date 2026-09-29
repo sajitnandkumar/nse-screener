@@ -46,6 +46,12 @@ def main():
     with open(os.path.join(DATA_DIR, "screener.json"), "w") as f:
         json.dump(candidates, f)
 
+    # Breakout library (breakouts.py): D/W/M breakouts that fired recently.
+    import breakouts
+    breakout_events = breakouts.scan_all({s: db.read_candles(s) for s in db.list_symbols()})
+    with open(os.path.join(DATA_DIR, "breakouts.json"), "w") as f:
+        json.dump(breakout_events, f)
+
     # UI freshness stamps. `data_through` = newest price bar we actually have (the
     # real data-freshness signal); `generated_at` = when this screen/site was built.
     # IST = UTC + 5:30, so build time reads correctly locally or in the UTC Action.
@@ -55,10 +61,12 @@ def main():
     with open(os.path.join(DATA_DIR, "meta.json"), "w") as f:
         json.dump({"generated_at": ist.strftime("%Y-%m-%d %H:%M IST"),
                    "data_through": data_through,
-                   "setups": len(candidates)}, f)
+                   "setups": len(candidates),
+                   "breakouts": len(breakout_events)}, f)
 
     # One candle file per (symbol, timeframe) that appears in the results.
-    pairs = sorted({(c["symbol"], c["timeframe"]) for c in candidates})
+    pairs = sorted({(c["symbol"], c["timeframe"]) for c in candidates}
+                   | {(e["symbol"], e["timeframe"]) for e in breakout_events})
     for symbol, tf in pairs:
         daily = db.read_candles(symbol)
         rows = RESAMPLE[tf](daily) if RESAMPLE[tf] else daily
@@ -68,7 +76,7 @@ def main():
             json.dump(candles, f)
 
     # Copy the frontend.
-    for name in ("index.html", "app.js", "styles.css"):
+    for name in ("index.html", "app.js", "styles.css", "breakouts.html", "breakouts.js"):
         shutil.copy(os.path.join("static", name), os.path.join(SITE, name))
     shutil.copytree(os.path.join("static", "vendor"),
                     os.path.join(SITE, "vendor"), dirs_exist_ok=True)
