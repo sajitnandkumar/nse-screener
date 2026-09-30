@@ -581,6 +581,17 @@ be runnable and reviewable before moving to the next.
         build_site on every run (|| continue), so backtest_results.json exists in
         the cloud and the Backtest page + link ship with each deploy.
 
+- [x] Slice 30: CROSSOVERS tab (2026-09-30). `crossovers.py`: price CLOSING across
+      an SMA/EMA (periods config `crossovers.periods` [100,200,220]) on D/W/M, fired
+      within fresh_bars {1d:3,1w:2,1m:2}; EMA is SMA-seeded (k=2/(n+1)) and app.js
+      maSeries() uses the SAME formula to draw the line. Emits direction Bullish/
+      Bearish, ma_value, dist_pct, rvol, cross_date. build_site writes
+      data/crossovers.json; index.html third tab (mode "xo"). Filters = labelled
+      single-choice groups Direction(Both/Bull/Bear) · Average(SMA/EMA) ·
+      Period(100/200/220), default SMA 200 -> one row per stock (user found three
+      unlabeled "All" chips unintuitive). MONTHLY IS EMPTY by design: only ~80
+      monthly bars since 2020, so 100+ period averages don't exist (UI says so).
+
 ### Deployment ops (GitHub Pages + Actions) — how it actually works
 - Repo PUBLIC (free unlimited Actions + Pages). Code+EQUITY_L.csv+static/vendor
   committed; .env/nse_data.db/screen_cache.json/instruments.json/site/ gitignored.

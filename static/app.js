@@ -11,8 +11,10 @@ const state = {
         sort: { col: "confidence", dir: "desc" } },
   bo: { filters: { dir: "All", type: "All", minRvol: 2, minTurnover: 5 },
         sort: { col: "fired", dir: "asc" } },
+  xo: { filters: { dir: "Both", ma: "SMA", period: "200", minRvol: 0, minTurnover: 5 },
+        sort: { col: "fired", dir: "asc" } },
 };
-let SR = [], BO = [], SUMMARY = null;
+let SR = [], BO = [], XO = [], SUMMARY = null;
 
 // ---- formatting --------------------------------------------------------
 const safeName = (s) => s.replace(/[^A-Za-z0-9]/g, "_");            // matches build_site._safe
@@ -70,11 +72,23 @@ const COLS = {
     { key: "fired", label: "Fired", html: (e) => `<span class="muted">${firedText(e)}</span>`, sort: (e) => e.bars_ago },
   ],
 };
+COLS.xo = [
+  { key: "symbol", label: "Symbol", l: true, html: (e) => `<span class="sym">${sym(e)}</span>`, sort: (e) => e.symbol },
+  { key: "close", label: "LTP", html: (e) => px(e.close), sort: (e) => e.close },
+  { key: "ma", label: "Average", l: true, html: (e) => `${e.ma_type} ${e.period}`, sort: (e) => e.ma_type + e.period },
+  { key: "direction", label: "Cross", l: true, html: (e) => `<span class="pill ${e.direction === "Bullish" ? "up" : "down"}">${e.direction}</span>`, sort: (e) => e.direction },
+  { key: "ma_value", label: "MA value", html: (e) => px(e.ma_value), sort: (e) => e.ma_value },
+  { key: "dist_pct", label: "vs MA", html: (e) => `<span class="${e.dist_pct >= 0 ? "up" : "down"}">${signed(e.dist_pct)}%</span>`, sort: (e) => e.dist_pct },
+  { key: "rvol", label: "Vol surge", html: (e) => `<span class="${e.rvol >= 1.5 ? "up" : "dim"}">${xfmt(e.rvol)}</span>`, sort: (e) => e.rvol ?? -1 },
+  { key: "fired", label: "Crossed", html: (e) => `<span class="muted">${firedText(e)}</span>`, sort: (e) => e.bars_ago },
+];
 const firedText = (e) => (e.forming ? "live" : e.bars_ago === 0 ? "latest bar" : `${e.bars_ago} bar${e.bars_ago > 1 ? "s" : ""} ago`);
 const cols = () => COLS[state.mode].filter((c) => c.need !== "summary" || SUMMARY);
 const rowKey = (c) => state.mode === "sr"
   ? `${c.symbol}:${c.line_type}:${c.timeframe}:${c.value_now}`
-  : `${c.symbol}:${c.code}:${c.timeframe}:${c.direction}:${c.trigger_date}:${c.level}`;
+  : state.mode === "bo"
+  ? `${c.symbol}:${c.code}:${c.timeframe}:${c.direction}:${c.trigger_date}:${c.level}`
+  : `${c.symbol}:${c.ma_type}:${c.period}:${c.timeframe}:${c.cross_date}`;
 
 // ---- filtering / sorting -----------------------------------------------
 function passSR(c) {
@@ -93,6 +107,15 @@ function passBO(e) {
   if (f.minRvol > 0 && (e.rvol ?? 0) < f.minRvol) return false;
   return (e.turnover_cr ?? 0) >= f.minTurnover;
 }
+function passXO(e) {
+  const f = state.xo.filters;
+  if (f.dir !== "Both" && e.direction !== f.dir) return false;
+  if (e.ma_type !== f.ma || String(e.period) !== f.period) return false;
+  if (f.minRvol > 0 && (e.rvol ?? 0) < f.minRvol) return false;
+  return (e.turnover_cr ?? 0) >= f.minTurnover;
+}
+const PASS = { sr: passSR, bo: passBO, xo: passXO };
+
 function sortRows(rows) {
   const s = state[state.mode].sort;
   const col = COLS[state.mode].find((x) => x.key === s.col) || COLS[state.mode][0];
@@ -106,12 +129,13 @@ function sortRows(rows) {
 
 // ---- data load -----------------------------------------------------------
 async function loadAll() {
-  const [scr, bo, sum] = await Promise.all([
+  const [scr, bo, xo, sum] = await Promise.all([
     fetch("data/screener.json").then((r) => r.json()),
     fetch("data/breakouts.json").then((r) => (r.ok ? r.json() : [])).catch(() => []),
+    fetch("data/crossovers.json").then((r) => (r.ok ? r.json() : [])).catch(() => []),
     fetch("data/backtest_summary.json").then((r) => (r.ok ? r.json() : null)).catch(() => null),
   ]);
-  SR = scr; BO = bo; SUMMARY = sum;
+  SR = scr; BO = bo; XO = xo; SUMMARY = sum;
   if (SUMMARY && SUMMARY.page) document.getElementById("bt-link").style.display = "";
   renderFilters();
   loadList();
@@ -154,6 +178,24 @@ function renderFilters() {
     bindNum("f-conf", state.sr.filters, "minConf", parseFloat);
     bindNum("f-turn", state.sr.filters, "minTurnover", parseFloat);
     bindChips("c-setup", (v) => (state.sr.filters.setupType = v));
+  } else if (state.mode === "xo") {
+    const f = state.xo.filters;
+    box.innerHTML = `
+      <div class="frow">
+        <div class="field">Direction${chips("c-dir", ["Both", "Bullish", "Bearish"], f.dir)}</div>
+        <div class="field">Average${chips("c-ma", ["SMA", "EMA"], f.ma)}</div>
+        <div class="field">Period${chips("c-period", ["100", "200", "220"], f.period)}</div>
+        <span class="shown" id="shown"></span>
+      </div>
+      <div class="frow">
+        ${field("f-rvol", "Min volume surge", "Volume on the crossing bar vs its normal average", f.minRvol, 0.1)}
+        ${field("f-turn", "Min ₹ cr/day", "Average daily traded value, in ₹ crore", f.minTurnover, 1)}
+      </div>`;
+    bindNum("f-rvol", state.xo.filters, "minRvol", parseFloat);
+    bindNum("f-turn", state.xo.filters, "minTurnover", parseFloat);
+    bindChips("c-dir", (v) => (state.xo.filters.dir = v));
+    bindChips("c-ma", (v) => (state.xo.filters.ma = v));
+    bindChips("c-period", (v) => (state.xo.filters.period = v));
   } else {
     const f = state.bo.filters;
     box.innerHTML = `
@@ -209,16 +251,19 @@ function renderHead() {
 }
 
 function loadList() {
-  const src = state.mode === "sr" ? SR : BO;
+  const src = { sr: SR, bo: BO, xo: XO }[state.mode];
   const base = src.filter((c) => c.timeframe === state.tf);
-  const rows = sortRows(base.filter(state.mode === "sr" ? passSR : passBO));
+  const rows = sortRows(base.filter(PASS[state.mode]));
   renderHead();
   const body = document.getElementById("list-body"), empty = document.getElementById("list-empty");
   document.getElementById("shown").textContent = `${rows.length} of ${base.length} shown`;
   body.innerHTML = "";
   if (!rows.length) {
     empty.style.display = "flex";
-    empty.textContent = base.length ? "Nothing matches these filters — try loosening them." : `No ${state.mode === "sr" ? "setups" : "breakouts"} on this timeframe.`;
+    const what = { sr: "setups", bo: "breakouts", xo: "crossovers" }[state.mode];
+    empty.textContent = base.length ? "Nothing matches these filters — try loosening them."
+      : state.mode === "xo" && state.tf === "1m" ? "Monthly history is too short for a 100+ period average (data starts in 2020)."
+      : `No ${what} on this timeframe.`;
     return;
   }
   empty.style.display = "none";
@@ -278,9 +323,12 @@ function drawChart(fit) {
     mainSeries.setData(candles);
   }
 
-  if (state.mode === "sr") drawSR(c, candles); else drawBO(c);
+  if (state.mode === "sr") drawSR(c, candles); else if (state.mode === "bo") drawBO(c); else drawXO(c, candles);
   if (fit) {
-    if (state.mode === "bo") {
+    if (state.mode === "xo") {
+      const n = candles.length;
+      chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - Math.max(260, c.period + 60)), to: n + 3 });
+    } else if (state.mode === "bo") {
       // Breakouts: open zoomed on the recent action (last ~60 candles), widened
       // just enough to include where the earliest level line starts.
       const n = candles.length;
@@ -318,6 +366,32 @@ function drawBO(e) {
   const long = e.direction === "Long";
   mainSeries.setMarkers([{ time: e.trigger_date, position: long ? "belowBar" : "aboveBar",
     color: long ? "#34d399" : "#f87171", shape: long ? "arrowUp" : "arrowDown", text: "trigger" }]);
+}
+
+// Moving average over closes — must match crossovers.py (sma / ema, SMA-seeded EMA).
+function maSeries(candles, type, n) {
+  const out = [];
+  if (type === "SMA") {
+    let s = 0;
+    candles.forEach((k, i) => { s += k.close; if (i >= n) s -= candles[i - n].close; if (i >= n - 1) out.push({ time: k.time, value: s / n }); });
+  } else {
+    if (candles.length < n) return out;
+    const k = 2 / (n + 1);
+    let e = candles.slice(0, n).reduce((a, c) => a + c.close, 0) / n;
+    out.push({ time: candles[n - 1].time, value: e });
+    for (let i = n; i < candles.length; i++) { e = (candles[i].close - e) * k + e; out.push({ time: candles[i].time, value: e }); }
+  }
+  return out;
+}
+
+function drawXO(e, candles) {
+  const s = chart.addLineSeries({ color: "#7c8cff", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    crosshairMarkerVisible: false, title: `${e.ma_type} ${e.period}` });
+  s.setData(maSeries(candles, e.ma_type, e.period));
+  extras.push(s);
+  const up = e.direction === "Bullish";
+  mainSeries.setMarkers([{ time: e.cross_date, position: up ? "belowBar" : "aboveBar",
+    color: up ? "#34d399" : "#f87171", shape: up ? "arrowUp" : "arrowDown", text: "cross" }]);
 }
 
 // ---- info card: plain-English summary + labelled tiles -----------------------
@@ -366,6 +440,21 @@ function renderInfo(c) {
         ${tile("Turnover", c.turnover_cr == null ? "—" : "₹" + c.turnover_cr + " cr", "avg per day")}
         ${tile("Last touch", dfmt(c.last_touch))}
       </div>`;
+  } else if (state.mode === "xo") {
+    const up = c.direction === "Bullish";
+    el.innerHTML = `
+      <div class="i-top"><span class="i-sym">${sym(c)}</span><span class="i-ltp price">${inr(c.close)}</span>
+        <span class="pill ${up ? "up" : "down"}">${c.direction}</span>
+        <span class="pill neutral">${c.ma_type} ${c.period}</span>
+        <span class="pill neutral">${TF_WORD[c.timeframe]}</span></div>
+      <div class="i-sum">Closed <b>${up ? "above" : "below"}</b> its ${c.period}-${TF_BAR[c.timeframe]} ${c.ma_type} on ${dfmt(c.cross_date)}
+        (close ${inr(c.cross_close)} vs average ${inr(c.cross_ma)})${c.rvol != null ? ` on a <b>${xfmt(c.rvol)}</b> volume surge` : ""}.${c.forming ? " <span class='muted'>(this bar is still forming)</span>" : ""}</div>
+      <div class="tiles">
+        ${tile(`${c.ma_type} ${c.period} now`, inr(c.ma_value), "the average today")}
+        ${tile("Price vs average", signed(c.dist_pct) + "%", up ? "above the line" : "below the line", up ? "up" : "down")}
+        ${tile("Volume surge", xfmt(c.rvol) + " normal", `vs last ${RVOL_N[c.timeframe]} ${TF_BAR[c.timeframe]}s`, c.rvol >= 1.5 ? "up" : "")}
+        ${tile("Crossed", dfmt(c.cross_date), firedText(c))}
+      </div>`;
   } else {
     const long = c.direction === "Long";
     el.innerHTML = `
@@ -411,6 +500,6 @@ window.addEventListener("DOMContentLoaded", () => {
   makeChart(); setupToggles();
   const q = new URLSearchParams(location.search);
   if (["1d", "1w", "1m"].includes(q.get("tf"))) { state.tf = q.get("tf"); setActive("#tf-toggle", "tf", state.tf); }
-  if (q.get("mode") === "bo") { state.mode = "bo"; setActive("#mode-toggle", "mode", "bo"); }
+  if (["bo", "xo"].includes(q.get("mode"))) { state.mode = q.get("mode"); setActive("#mode-toggle", "mode", state.mode); }
   loadAll(); loadMeta();
 });

@@ -52,6 +52,12 @@ def main():
     with open(os.path.join(DATA_DIR, "breakouts.json"), "w") as f:
         json.dump(breakout_events, f)
 
+    # Moving-average crossovers (crossovers.py).
+    import crossovers
+    xo_events = crossovers.scan_all({s: db.read_candles(s) for s in db.list_symbols()})
+    with open(os.path.join(DATA_DIR, "crossovers.json"), "w") as f:
+        json.dump(xo_events, f)
+
     # UI freshness stamps. `data_through` = newest price bar we actually have (the
     # real data-freshness signal); `generated_at` = when this screen/site was built.
     # IST = UTC + 5:30, so build time reads correctly locally or in the UTC Action.
@@ -62,11 +68,13 @@ def main():
         json.dump({"generated_at": ist.strftime("%Y-%m-%d %H:%M IST"),
                    "data_through": data_through,
                    "setups": len(candidates),
-                   "breakouts": len(breakout_events)}, f)
+                   "breakouts": len(breakout_events),
+                   "crossovers": len(xo_events)}, f)
 
     # One candle file per (symbol, timeframe) that appears in the results.
     pairs = sorted({(c["symbol"], c["timeframe"]) for c in candidates}
-                   | {(e["symbol"], e["timeframe"]) for e in breakout_events})
+                   | {(e["symbol"], e["timeframe"]) for e in breakout_events}
+                   | {(e["symbol"], e["timeframe"]) for e in xo_events})
     for symbol, tf in pairs:
         daily = db.read_candles(symbol)
         rows = RESAMPLE[tf](daily) if RESAMPLE[tf] else daily

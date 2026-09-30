@@ -106,3 +106,13 @@ breakouts:
   gap:                        # daily only
     rvol: 2.0
     size_atr: 0.5
+
+# ---------------------------------------------------------------------------
+# Moving-average crossovers (crossovers.py): price closing across an SMA / EMA.
+# NOTE: monthly bars only go back to 2020 (~80 bars), so 100+ period averages
+# never exist on the Monthly tab — it will be empty until the history is longer.
+# ---------------------------------------------------------------------------
+crossovers:
+  periods: [100, 200, 220]
+  fresh_bars: {1d: 3, 1w: 2, 1m: 2}    # show crosses within the last N bars
+  rvol_bars: {1d: 50, 1w: 20, 1m: 12}  # volume surge lookback (same as breakouts)
